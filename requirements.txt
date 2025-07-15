@@ -1,0 +1,4 @@
+pypdf
+pdfplumber
+pillow
+pywin32 
