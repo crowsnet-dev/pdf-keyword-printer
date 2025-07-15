@@ -1,66 +1,95 @@
-# pdf-keyword-printer
+# PDF キーワード印刷ツール
 
 ## 概要
 
-**pdf-keyword-printer**は、PDF ファイル内の指定キーワードを含むページだけを抽出し、プレビューや印刷ができる Windows 用 GUI アプリケーションです。  
-Python 製で、Windows 標準の印刷機能を利用します。外部 PDF リーダーは不要です。
+**PDF キーワード印刷ツール**は、ディレクトリ内の PDF ファイルから指定キーワードを含むページのみを抽出し、プレビューや印刷ができる Windows 専用 GUI アプリケーションです。
 
----
+### 主な特徴
 
-## 特徴
-
-- PDF ファイルからキーワードでページ抽出
-- プレビュー（Microsoft Edge で表示）
-- 選択したプリンタで直接印刷
+- ディレクトリ内の全 PDF ファイルを自動検索
+- キーワードを含むページのみを抽出
+- プレビュー機能（システムの既定アプリで表示）
+- 印刷機能（Adobe Acrobat 対応）
+- 一括印刷機能
 - シンプルな日本語 GUI
 
 ---
 
 ## 動作環境
 
-- Windows 10/11
-- Python 3.11 以上
+- **OS**: Windows 10/11
+- **Python**: 3.11 以上
+- **推奨**: Adobe Acrobat（印刷品質向上のため）
 
 ---
 
 ## セットアップ手順
 
-### 1. 仮想環境の作成（推奨）
+### 1. リポジトリのクローン
 
-コマンドプロンプトまたは PowerShell でプロジェクトルートにて：
+```powershell
+git clone https://github.com/your-repo/pdf-keyword-printer.git
+cd pdf-keyword-printer
+```
+
+### 2. 仮想環境の作成（推奨）
 
 ```powershell
 python -m venv .venv
 .venv\Scripts\activate
 ```
 
-### 2. 依存パッケージのインストール
+### 3. 依存パッケージのインストール
 
 ```powershell
 pip install -r requirements.txt
 ```
 
----
-
-## 使い方
-
-### 1. アプリの起動
+### 4. アプリケーションの起動
 
 ```powershell
 python src/pdf_keyword_printer.py
 ```
 
-### 2. 操作手順
+---
 
-1. 「参照...」ボタンで PDF ファイルを選択
-2. 検索キーワードを入力（例：部品出庫）
-3. プリンタを選択（省略時は既定プリンタ）
-4. 「プレビュー」ボタンで該当ページを Edge で確認
-5. 「印刷」ボタンで該当ページのみ印刷
+## 使用方法
+
+### 基本操作手順
+
+1. **ディレクトリ選択**
+
+   - 「参照...」ボタンをクリック
+   - PDF ファイルが含まれるフォルダを選択
+
+2. **キーワード入力**
+
+   - 検索したいキーワードを入力（例：部品出庫）
+   - 大文字小文字は区別されません
+
+3. **プリンタ選択**（オプション）
+
+   - ドロップダウンから印刷先プリンタを選択
+   - 省略時はシステムの既定プリンタを使用
+
+4. **PDF 検索実行**
+
+   - 「検索」ボタンをクリック
+   - ディレクトリ内の全 PDF ファイルを検索
+
+5. **結果確認と操作**
+
+   - ヒットした PDF ファイルが一覧表示
+   - 各ファイルのヒットページ数が表示
+   - 「プレビュー」ボタンで該当ページを確認
+   - 「印刷」ボタンで該当ページのみ印刷
+
+6. **一括印刷**
+   - 「一括印刷」ボタンで全ヒット PDF を連続印刷
 
 ---
 
-## Windows アプリ（EXE）化手順
+## Windows アプリ（EXE）化
 
 ### 1. PyInstaller のインストール
 
@@ -71,18 +100,22 @@ pip install pyinstaller
 ### 2. EXE ファイルの作成
 
 ```powershell
-pyinstaller build/pdf_keyword_printer.spec
+pyinstaller "PDFキーワード印刷ツール.spec"
 ```
 
-- `dist/`フォルダ内に`pdf_keyword_printer.exe`が生成されます。
+### 3. 配布ファイル
+
+- `dist/PDFキーワード印刷ツール.exe` - 実行ファイル
 
 ---
 
-## 注意事項
+## 使用ライブラリ
 
-- 依存パッケージは`requirements.txt`で管理しています。
-- `.venv/`などの仮想環境フォルダは git 管理対象外です。
-- 印刷機能は Windows 標準機能を利用します。プリンタドライバが正しくインストールされている必要があります。
+- **pypdf**: PDF 読み書き・ページ抽出
+- **pdfplumber**: 高精度テキスト抽出
+- **pillow**: 画像処理
+- **pywin32**: Windows 印刷機能・プリンタ管理
+- **tkinter**: GUI フレームワーク
 
 ---
 
@@ -94,4 +127,5 @@ MIT License
 
 ## 作者
 
-- [CrowsNET Co., Ltd.]
+- **開発**: [CrowsNET Co., Ltd.]
+- **対応 OS**: Windows 10/11
