@@ -59,6 +59,10 @@ class Constants:
     # Adobe Acrobat印刷対応設定
     PRINT_RETRY_COUNT = 3
     PRINT_RETRY_DELAY = 2
+    
+    # ローディング表示設定
+    LOADING_DOT_INTERVAL = 500  # ミリ秒
+    LOADING_TEXT = "処理中"
 
 
 class PdfProcessor:
@@ -386,6 +390,11 @@ class PdfKeywordPrinter(tk.Tk):
         self.temp_pdf_paths = []  # 一時PDFのパスリスト（削除管理用）
         self.pdf_files = []  # 検索されたPDFファイルのリスト
         self.pdf_hit_info = {}  # {pdf_path: [ヒットページリスト]}
+        
+        # ローディング表示用の変数
+        self.loading_label = None
+        self.loading_animation_id = None
+        self.is_loading = False
 
         # Build UI
         self._build_ui()
@@ -432,6 +441,10 @@ class PdfKeywordPrinter(tk.Tk):
         search_frame.pack(fill="x", pady=Constants.PADDING)
         tk.Button(search_frame, text="PDFファイル検索", command=self.search_pdf_files, 
                  width=Constants.BUTTON_WIDTH).pack(side="left")
+        
+        # ローディング表示ラベル
+        self.loading_label = tk.Label(search_frame, text="", fg="blue", font=("Meiryo", 9))
+        self.loading_label.pack(side="left", padx=(Constants.PADDING, 0))
 
         # メッセージエリア（設定とPDF一覧の間）
         message_frame = tk.LabelFrame(main_frame, text="メッセージ", padx=Constants.PADDING, pady=Constants.PADDING)
@@ -546,6 +559,7 @@ class PdfKeywordPrinter(tk.Tk):
             return
 
         self.add_message("PDFファイルを検索中...", "info")
+        self.start_loading("PDFファイル検索中")
         
         # バックグラウンドで検索
         threading.Thread(
@@ -591,10 +605,18 @@ class PdfKeywordPrinter(tk.Tk):
                 self.pdf_hit_info = pdf_hit_info
                 self._update_file_list()
                 self.add_message(f"検索完了: {len(pdf_files)}個のPDFファイルを発見（{hit_count}ファイルがキーワードに該当）", "success")
+                self.stop_loading()
+                # ポップアップメッセージを表示
+                self.show_popup_message(
+                    "検索完了", 
+                    f"検索が完了しました。\n\n発見されたPDFファイル: {len(pdf_files)}個\nキーワードに該当するファイル: {hit_count}個", 
+                    "success"
+                )
             self.after(0, update_ui)
         except Exception as e:
             def show_error():
                 self.add_message(f"検索エラー: {e}", "error")
+                self.stop_loading()
                 messagebox.showerror("エラー", f"PDFファイル検索中にエラーが発生しました: {e}")
             self.after(0, show_error)
 
@@ -648,6 +670,7 @@ class PdfKeywordPrinter(tk.Tk):
         keyword = self.keyword_var.get().strip()
         
         self._set_ui_state("disabled")
+        self.start_loading("プレビュー処理中")
 
         threading.Thread(
             target=self._process_and_preview_single,
@@ -664,6 +687,7 @@ class PdfKeywordPrinter(tk.Tk):
         printer = self.printer_var.get()
         
         self._set_ui_state("disabled")
+        self.start_loading("印刷処理中")
 
         threading.Thread(
             target=self._process_and_print_single,
@@ -685,6 +709,7 @@ class PdfKeywordPrinter(tk.Tk):
         printer = self.printer_var.get()
         self._set_ui_state("disabled")
         self.add_message(f"一括印刷処理中...（{len(hit_pdfs)}件）", "info")
+        self.start_loading("一括印刷処理中")
         threading.Thread(
             target=self._process_batch_print,
             args=(hit_pdfs, keyword, printer),
@@ -802,9 +827,21 @@ class PdfKeywordPrinter(tk.Tk):
                     pass
             
             self._done(f"一括印刷完了しました", printed=True)
+            # ポップアップメッセージを表示
+            self.show_popup_message(
+                "一括印刷完了", 
+                f"一括印刷が完了しました。", 
+                "success"
+            )
         except Exception:
             # エラーメッセージは表示しない
             self._done("一括印刷処理を実行しました", printed=True)
+            # エラー時もポップアップメッセージを表示
+            self.show_popup_message(
+                "一括印刷完了", 
+                "一括印刷処理を実行しました。", 
+                "info"
+            )
 
 
 
@@ -820,6 +857,7 @@ class PdfKeywordPrinter(tk.Tk):
         """処理完了時の処理"""
         def finish():
             self._set_ui_state("normal")
+            self.stop_loading()
             
             # メッセージエリアにも追加
             if error:
@@ -871,6 +909,56 @@ class PdfKeywordPrinter(tk.Tk):
             self.message_text.configure(state="disabled")
         
         self.after(0, clear)
+
+    def start_loading(self, message: str = None):
+        """ローディング表示を開始"""
+        def start():
+            self.is_loading = True
+            self.loading_text = message or Constants.LOADING_TEXT
+            self.loading_dots = ""
+            self._animate_loading()
+        self.after(0, start)
+
+    def stop_loading(self):
+        """ローディング表示を停止"""
+        def stop():
+            self.is_loading = False
+            if self.loading_animation_id:
+                self.after_cancel(self.loading_animation_id)
+                self.loading_animation_id = None
+            if self.loading_label:
+                self.loading_label.config(text="")
+        self.after(0, stop)
+
+    def _animate_loading(self):
+        """ローディングアニメーション"""
+        if not self.is_loading:
+            return
+        
+        # ドットを追加
+        self.loading_dots += "."
+        if len(self.loading_dots) > 3:
+            self.loading_dots = ""
+        
+        # ラベルを更新
+        if self.loading_label:
+            self.loading_label.config(text=f"{self.loading_text}{self.loading_dots}")
+        
+        # 次のアニメーションをスケジュール
+        self.loading_animation_id = self.after(Constants.LOADING_DOT_INTERVAL, self._animate_loading)
+
+    def show_popup_message(self, title: str, message: str, message_type: str = "info"):
+        """ポップアップメッセージを表示"""
+        def show():
+            if message_type == "error":
+                messagebox.showerror(title, message)
+            elif message_type == "warning":
+                messagebox.showwarning(title, message)
+            elif message_type == "success":
+                messagebox.showinfo(title, message)
+            else:
+                messagebox.showinfo(title, message)
+        self.after(0, show)
 
 
 if __name__ == "__main__":
