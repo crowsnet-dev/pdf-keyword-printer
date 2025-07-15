@@ -53,12 +53,18 @@ class Constants:
     PRINTER_MENU_WIDTH = 40
     
     # タイムアウト設定
-    PRINT_TIMEOUT = 30
-    FILE_ACCESS_WAIT = 5
+    PRINT_TIMEOUT = 5
+    FILE_ACCESS_WAIT = 0.5
     
     # Adobe Acrobat印刷対応設定
     PRINT_RETRY_COUNT = 3
     PRINT_RETRY_DELAY = 2
+    
+    # 印刷ジョブ送信後の待機時間（削除予定）
+    PRINT_JOB_WAIT = 0.1
+    
+    # 一括印刷時の最小待機時間
+    BATCH_PRINT_WAIT = 0.5
     
     # ローディング表示設定
     LOADING_DOT_INTERVAL = 500  # ミリ秒
@@ -338,15 +344,21 @@ class PrinterManager:
                     shell=False
                 )
                 
-                # 印刷プロセスの完了を待つ
-                try:
-                    process.wait(timeout=Constants.PRINT_TIMEOUT)
-                except subprocess.TimeoutExpired:
-                    process.kill()
-                    raise RuntimeError(f"Adobe Acrobat の印刷処理がタイムアウトしました（{Constants.PRINT_TIMEOUT}秒）")
+                # 印刷ジョブ送信は即座に完了するため、プロセスを即座に終了
+                if process.poll() is None:
+                    try:
+                        # プロセスを終了（印刷ジョブは既に送信済み）
+                        process.terminate()
+                        # 終了を待つ（最大1秒）
+                        process.wait(timeout=1)
+                    except subprocess.TimeoutExpired:
+                        # 強制終了
+                        process.kill()
+                        process.wait()
+                else:
+                    # プロセスが既に終了している場合
+                    pass
                 
-                # 印刷完了後に少し待機（印刷ジョブの処理を待つ）
-                time.sleep(3)
                 return
                 
             except subprocess.CalledProcessError as e:
@@ -357,7 +369,6 @@ class PrinterManager:
         # Adobe Acrobat が存在しない場合のフォールバック
         try:
             os.startfile(pdf_path, "print")
-            time.sleep(Constants.FILE_ACCESS_WAIT)
             return
         except Exception as e:
             raise RuntimeError(f"印刷に失敗しました: {e}")
@@ -789,7 +800,6 @@ class PdfKeywordPrinter(tk.Tk):
             
             # 印刷を実行
             PrinterManager.print_pdf(temp_pdf, printer)
-            time.sleep(Constants.FILE_ACCESS_WAIT)
             
             self._done(f"印刷完了 (ページ: {', '.join(map(str, [p+1 for p in pages]))})", printed=True)
             
@@ -817,8 +827,8 @@ class PdfKeywordPrinter(tk.Tk):
                     
                     # 印刷を実行
                     PrinterManager.print_pdf(temp_pdf, printer)
-                    # 印刷間の待機時間を増加（Adobe Acrobatの印刷ジョブ処理を待つ）
-                    time.sleep(5)
+                    # 印刷間の待機時間
+                    time.sleep(Constants.BATCH_PRINT_WAIT)
                     processed_count += 1
                     self.add_message(f"印刷成功: {os.path.basename(pdf_path)} (ページ: {', '.join(map(str, [p+1 for p in pages]))})", "success")
                             
