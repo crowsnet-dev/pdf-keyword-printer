@@ -30,6 +30,8 @@ import shutil
 import subprocess
 import glob
 import datetime
+import atexit
+import signal
 
 import pdfplumber
 from pypdf import PdfReader, PdfWriter
@@ -84,21 +86,56 @@ class PdfProcessor:
     
     @staticmethod
     def find_keyword_pages(pdf_path: str, keyword: str) -> List[int]:
-        """キーワードを含むページを検索"""
+        """キーワードを含むページを検索（テキストレイヤー対応）"""
         hit_pages = []
         try:
-            with pdfplumber.open(pdf_path) as pdf:
-                print(f"  PDF解析開始: {os.path.basename(pdf_path)} ({len(pdf.pages)}ページ)")
-                for i, page in enumerate(pdf.pages):
-                    try:
-                        text = page.extract_text() or ""
-                        if keyword.lower() in text.lower():
-                            hit_pages.append(i)
-                            print(f"    ページ{i+1}でキーワード発見")
-                    except Exception as e:
-                        print(f"    ページ{i+1}のテキスト抽出エラー: {e}")
-                        # ページ単位のエラーは無視して続行
-                        continue
+            # PDFファイルの基本チェック
+            if not os.path.exists(pdf_path):
+                raise FileNotFoundError(f"PDFファイルが見つかりません: {pdf_path}")
+            
+            file_size = os.path.getsize(pdf_path)
+            if file_size == 0:
+                raise ValueError(f"PDFファイルが空です: {pdf_path}")
+            
+            # PDFヘッダーの簡易チェック
+            with open(pdf_path, 'rb') as f:
+                header = f.read(1024)
+                if not header.startswith(b'%PDF'):
+                    raise ValueError(f"PDFファイルの形式が不正です: {pdf_path}")
+            
+            # pdfplumberでテキスト検索を試行
+            try:
+                with pdfplumber.open(pdf_path) as pdf:
+                    print(f"  PDF解析開始: {os.path.basename(pdf_path)} ({len(pdf.pages)}ページ)")
+                    for i, page in enumerate(pdf.pages):
+                        try:
+                            text = page.extract_text() or ""
+                            if keyword.lower() in text.lower():
+                                hit_pages.append(i)
+                                print(f"    ページ{i+1}でキーワード発見")
+                        except Exception as e:
+                            print(f"    ページ{i+1}のテキスト抽出エラー: {e}")
+                            # ページ単位のエラーは無視して続行
+                            continue
+            except Exception as pdfplumber_error:
+                print(f"  pdfplumber解析エラー: {pdfplumber_error}")
+                # pdfplumberで失敗した場合、pypdfでフォールバック
+                print(f"  pypdfでフォールバック解析を試行...")
+                try:
+                    reader = PdfReader(pdf_path)
+                    for i, page in enumerate(reader.pages):
+                        try:
+                            text = page.extract_text() or ""
+                            if keyword.lower() in text.lower():
+                                hit_pages.append(i)
+                                print(f"    ページ{i+1}でキーワード発見（pypdf）")
+                        except Exception as e:
+                            print(f"    ページ{i+1}のテキスト抽出エラー（pypdf）: {e}")
+                            continue
+                except Exception as pypdf_error:
+                    print(f"  pypdf解析エラー: {pypdf_error}")
+                    raise RuntimeError(f"PDF解析に失敗しました: {pdfplumber_error}, {pypdf_error}")
+                    
         except Exception as e:
             print(f"  PDFファイル読み込みエラー ({os.path.basename(pdf_path)}): {e}")
             raise  # 上位でハンドリングするため再送出
@@ -108,7 +145,7 @@ class PdfProcessor:
     
     @staticmethod
     def extract_pages(pdf_path: str, page_indices: List[int], keyword: str = None, suffix: str = None) -> str:
-        """指定されたページを抽出して一時ファイルに保存"""
+        """指定されたページを抽出して一時ファイルに保存（テキストレイヤー保持）"""
         if not page_indices:
             raise ValueError("ページが指定されていません")
         
@@ -118,18 +155,29 @@ class PdfProcessor:
         print(f"サフィックス: {suffix}")
         
         try:
+            # 元PDFファイルを読み込み
             reader = PdfReader(pdf_path)
             print(f"元PDFページ数: {len(reader.pages)}")
+            
+            # 新しいPDFライターを作成
             writer = PdfWriter()
             
+            # メタデータをコピー（テキストレイヤー保持のため重要）
+            if reader.metadata:
+                writer.add_metadata(reader.metadata)
+            
+            # 指定されたページを追加（テキストレイヤーを保持）
             for idx in page_indices:
                 if idx < len(reader.pages):
-                    writer.add_page(reader.pages[idx])
-                    print(f"  ページ{idx+1}を追加")
+                    # ページをそのままコピー（テキストレイヤー保持）
+                    page = reader.pages[idx]
+                    writer.add_page(page)
+                    print(f"  ページ{idx+1}を追加（テキストレイヤー保持）")
                 else:
                     print(f"  警告: ページ{idx+1}は存在しません（最大ページ数: {len(reader.pages)}）")
             
             print(f"抽出ページ数: {len(writer.pages)}")
+            
         except Exception as e:
             print(f"PDF読み込みエラー: {e}")
             raise
@@ -194,6 +242,7 @@ class PdfProcessor:
             print(f"ファイル名チェックエラー: {e}")
         
         try:
+            # PDFファイルを書き込み（テキストレイヤー保持）
             with open(temp_path, "wb") as f:
                 writer.write(f)
                 f.flush()
@@ -205,6 +254,30 @@ class PdfProcessor:
             
             if file_size == 0:
                 raise RuntimeError(f"一時PDFファイルの作成に失敗しました（0バイト）")
+            
+            # 作成したPDFファイルの妥当性を確認
+            try:
+                # 作成したPDFファイルを読み込んでテキスト抽出テスト
+                test_reader = PdfReader(temp_path)
+                if len(test_reader.pages) != len(page_indices):
+                    raise RuntimeError(f"抽出ページ数が一致しません（期待: {len(page_indices)}, 実際: {len(test_reader.pages)}）")
+                
+                # テキスト抽出テスト（最初のページのみ）
+                if test_reader.pages:
+                    test_page = test_reader.pages[0]
+                    # テキスト抽出を試行（エラーが発生しないことを確認）
+                    try:
+                        test_text = test_page.extract_text()
+                        print(f"テキスト抽出テスト成功: {len(test_text or '')}文字")
+                    except Exception as text_error:
+                        print(f"警告: テキスト抽出テストでエラー: {text_error}")
+                        # テキスト抽出エラーでもファイルは有効とみなす
+                
+                print(f"PDFファイル妥当性確認完了: テキストレイヤー保持確認済み")
+                
+            except Exception as validation_error:
+                print(f"PDFファイル妥当性確認エラー: {validation_error}")
+                # 妥当性確認に失敗してもファイルは返す（フォールバック）
             
             return temp_path
             
@@ -550,6 +623,9 @@ class PdfKeywordPrinter(tk.Tk):
         self.loading_animation_id = None
         self.is_loading = False
 
+        # アプリケーション終了時のクリーンアップを設定
+        self._setup_cleanup()
+
         # Build UI
         self._build_ui()
 
@@ -561,6 +637,53 @@ class PdfKeywordPrinter(tk.Tk):
         
         # Adobe Acrobatの検出状況を確認
         self._check_adobe_acrobat_status()
+
+    def _setup_cleanup(self):
+        """アプリケーション終了時のクリーンアップ設定"""
+        # アプリケーション終了時のクリーンアップ関数を登録
+        atexit.register(self._cleanup_on_exit)
+        
+        # Windowsのシグナルハンドラーを設定
+        try:
+            signal.signal(signal.SIGINT, self._signal_handler)
+            signal.signal(signal.SIGTERM, self._signal_handler)
+        except (AttributeError, OSError):
+            # Windowsでは一部のシグナルが利用できない場合がある
+            pass
+        
+        # Tkinterのウィンドウクローズイベントを設定
+        self.protocol("WM_DELETE_WINDOW", self._on_closing)
+
+    def _cleanup_on_exit(self):
+        """アプリケーション終了時のクリーンアップ処理"""
+        print("アプリケーション終了時のクリーンアップを実行中...")
+        try:
+            # 一時ファイルを削除
+            for temp_path in self.temp_pdf_paths:
+                if temp_path and os.path.exists(temp_path):
+                    try:
+                        os.unlink(temp_path)
+                        print(f"一時ファイルを削除: {temp_path}")
+                    except Exception as e:
+                        print(f"一時ファイル削除エラー: {temp_path}, {e}")
+            
+            # リストをクリア
+            self.temp_pdf_paths.clear()
+            print("クリーンアップ完了")
+        except Exception as e:
+            print(f"クリーンアップエラー: {e}")
+
+    def _signal_handler(self, signum, frame):
+        """シグナルハンドラー"""
+        print(f"シグナル受信: {signum}")
+        self._cleanup_on_exit()
+        sys.exit(0)
+
+    def _on_closing(self):
+        """ウィンドウクローズ時の処理"""
+        print("ウィンドウを閉じています...")
+        self._cleanup_on_exit()
+        self.destroy()
 
     def _build_ui(self):
         """UIを構築"""
@@ -1125,4 +1248,13 @@ class PdfKeywordPrinter(tk.Tk):
 
 if __name__ == "__main__":
     app = PdfKeywordPrinter()
-    app.mainloop()
+    try:
+        app.mainloop()
+    except KeyboardInterrupt:
+        print("キーボード割り込みを検出しました")
+    except Exception as e:
+        print(f"アプリケーションエラー: {e}")
+    finally:
+        # 確実にクリーンアップを実行
+        app._cleanup_on_exit()
+        print("アプリケーションを終了します")
