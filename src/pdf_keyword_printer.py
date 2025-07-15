@@ -29,6 +29,7 @@ import hashlib
 import shutil
 import subprocess
 import glob
+import datetime
 
 import pdfplumber
 from pypdf import PdfReader, PdfWriter
@@ -51,34 +52,17 @@ class Constants:
     KEYWORD_ENTRY_WIDTH = 30
     PRINTER_MENU_WIDTH = 40
     
-    # プリンタアプリケーションパス
-    EDGE_PATHS = [
-        r"C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe",
-        r"C:\Program Files\Microsoft\Edge\Application\msedge.exe"
-    ]
-    
-    ACROBAT_PATHS = [
-        r"C:\Program Files\Adobe\Acrobat DC\Acrobat\Acrobat.exe",
-        r"C:\Program Files (x86)\Adobe\Acrobat Reader DC\Reader\AcroRd32.exe",
-        r"C:\Program Files\Adobe\Acrobat Reader DC\Reader\AcroRd32.exe"
-    ]
-    
-    SUMATRA_PATHS = [
-        r"C:\Program Files\SumatraPDF\SumatraPDF.exe",
-        r"C:\Program Files (x86)\SumatraPDF\SumatraPDF.exe"
-    ]
-    
-    CHROME_PATHS = [
-        r"C:\Program Files\Google\Chrome\Application\chrome.exe",
-        r"C:\Program Files (x86)\Google\Chrome\Application\chrome.exe"
-    ]
-    
     # タイムアウト設定
     PRINT_TIMEOUT = 30
-    EDGE_PRINT_WAIT = 10
-    EDGE_DIALOG_WAIT = 15
-    CHROME_PRINT_WAIT = 10
     FILE_ACCESS_WAIT = 5
+    
+    # UltraThinkプリンタ対応の追加設定
+    PRINT_RETRY_COUNT = 3
+    PRINT_RETRY_DELAY = 2
+    FILE_STABILITY_WAIT = 3
+    
+    # 出力フォルダ設定
+    OUTPUT_FOLDER_NAME = "output"
 
 
 class PdfProcessor:
@@ -169,93 +153,29 @@ class PrinterManager:
             return "(既定)"
     
     @staticmethod
-    def print_with_edge(pdf_path: str, printer: str) -> bool:
-        """Microsoft Edgeで印刷"""
-        for edge_path in Constants.EDGE_PATHS:
-            if os.path.exists(edge_path):
-                try:
-                    if printer and "Microsoft Print to PDF" in printer:
-                        subprocess.Popen([edge_path, "--print", pdf_path])
-                        time.sleep(Constants.EDGE_DIALOG_WAIT)
-                    else:
-                        subprocess.Popen([edge_path, "--print", pdf_path])
-                        time.sleep(Constants.EDGE_PRINT_WAIT)
-                    return True
-                except Exception:
-                    continue
-        return False
-    
-    @staticmethod
-    def print_with_acrobat(pdf_path: str, printer: str) -> bool:
-        """Adobe Acrobatで印刷"""
-        for acrobat_path in Constants.ACROBAT_PATHS:
-            if os.path.exists(acrobat_path):
-                try:
-                    if printer and printer != "(既定)":
-                        subprocess.run([acrobat_path, '/t', pdf_path, printer], 
-                                     timeout=Constants.PRINT_TIMEOUT, check=True)
-                    else:
-                        subprocess.run([acrobat_path, '/t', pdf_path], 
-                                     timeout=Constants.PRINT_TIMEOUT, check=True)
-                    return True
-                except Exception:
-                    continue
-        return False
-    
-    @staticmethod
-    def print_with_sumatra(pdf_path: str, printer: str) -> bool:
-        """SumatraPDFで印刷"""
-        for sumatra_path in Constants.SUMATRA_PATHS:
-            if os.path.exists(sumatra_path):
-                try:
-                    if printer and printer != "(既定)":
-                        subprocess.run([sumatra_path, '-print-to', printer, pdf_path], 
-                                     timeout=Constants.PRINT_TIMEOUT, check=True)
-                    else:
-                        subprocess.run([sumatra_path, '-print-to-default', pdf_path], 
-                                     timeout=Constants.PRINT_TIMEOUT, check=True)
-                    return True
-                except Exception:
-                    continue
-        return False
-    
-    @staticmethod
-    def print_with_chrome(pdf_path: str, printer: str) -> bool:
-        """Google Chromeで印刷"""
-        for chrome_path in Constants.CHROME_PATHS:
-            if os.path.exists(chrome_path):
-                try:
-                    subprocess.Popen([chrome_path, "--print", pdf_path])
-                    time.sleep(Constants.CHROME_PRINT_WAIT)
-                    return True
-                except Exception:
-                    continue
-        return False
-    
-    @staticmethod
     def print_pdf(pdf_path: str, printer: str) -> None:
-        """PDFを印刷（複数の方法を試行）"""
-        methods = [
-            ("Microsoft Edge", lambda: PrinterManager.print_with_edge(pdf_path, printer)),
-            ("Adobe Acrobat", lambda: PrinterManager.print_with_acrobat(pdf_path, printer)),
-            ("SumatraPDF", lambda: PrinterManager.print_with_sumatra(pdf_path, printer)),
-            ("Google Chrome", lambda: PrinterManager.print_with_chrome(pdf_path, printer))
-        ]
+        """PDFを印刷（UltraThink対応、リトライ機能付き）"""
+        # ファイルの存在確認と安定化待機
+        if not os.path.exists(pdf_path):
+            raise RuntimeError(f"PDFファイルが見つかりません: {pdf_path}")
         
-        for method_name, method_func in methods:
-            if method_func():
-                return
+        time.sleep(Constants.FILE_STABILITY_WAIT)
         
-        raise RuntimeError(
-            f"印刷に失敗しました。\n\n"
-            f"PDFを印刷するためのアプリケーションが見つかりません。\n"
-            f"以下のいずれかをインストールしてください：\n"
-            f"• Microsoft Edge (推奨)\n"
-            f"• Adobe Acrobat Reader DC\n"
-            f"• SumatraPDF\n"
-            f"• Google Chrome\n\n"
-            f"または、PDFファイルの関連付けを確認してください。"
-        )
+        # システムの既定のPDFアプリケーションで印刷
+        try:
+            # ファイルを直接印刷（システムの既定のアプリケーションを使用）
+            os.startfile(pdf_path, "print")
+            time.sleep(Constants.FILE_ACCESS_WAIT)
+        except Exception as e:
+            raise RuntimeError(
+                f"印刷に失敗しました。\n\n"
+                f"プリンタでの印刷に問題がある可能性があります。\n"
+                f"以下の対処法をお試しください：\n"
+                f"• プリンタの電源を再起動\n"
+                f"• プリンタドライバーを更新\n"
+                f"• PDFファイルの関連付けを確認\n\n"
+                f"エラー詳細: {e}"
+            )
 
 
 class PreviewManager:
@@ -329,6 +249,27 @@ class PdfKeywordPrinter(tk.Tk):
         tk.Button(search_frame, text="PDFファイル検索", command=self.search_pdf_files, 
                  width=Constants.BUTTON_WIDTH).pack(side="left")
 
+        # メッセージエリア（設定とPDF一覧の間）
+        message_frame = tk.LabelFrame(main_frame, text="メッセージ", padx=Constants.PADDING, pady=Constants.PADDING)
+        message_frame.pack(fill="x", pady=(0, Constants.PADDING))
+        
+        # メッセージテキストエリア（スクロール付き）
+        message_text_frame = tk.Frame(message_frame)
+        message_text_frame.pack(fill="both", expand=True)
+        
+        self.message_text = tk.Text(message_text_frame, height=6, wrap="word", state="disabled")
+        message_scrollbar = tk.Scrollbar(message_text_frame, orient="vertical", command=self.message_text.yview)
+        self.message_text.configure(yscrollcommand=message_scrollbar.set)
+        
+        self.message_text.pack(side="left", fill="both", expand=True)
+        message_scrollbar.pack(side="right", fill="y")
+        
+        # メッセージクリアボタン
+        clear_button_frame = tk.Frame(message_frame)
+        clear_button_frame.pack(fill="x", pady=(Constants.PADDING, 0))
+        tk.Button(clear_button_frame, text="メッセージクリア", command=self.clear_messages, 
+                 width=15).pack(side="right")
+
         # PDFファイル一覧エリア（Canvas+Frame+Scrollbar）
         list_frame = tk.LabelFrame(main_frame, text="PDFファイル一覧", padx=Constants.PADDING, pady=Constants.PADDING)
         list_frame.pack(fill="both", expand=True, pady=(0, Constants.PADDING))
@@ -396,7 +337,8 @@ class PdfKeywordPrinter(tk.Tk):
 
     def _check_printing_capabilities(self):
         """Windows標準印刷機能の確認"""
-        self.status_var.set("印刷: Windows標準機能を使用")
+        self.status_var.set("印刷: Windows標準機能を使用（デスクトップ/output/日時フォルダに一時保存）")
+        self.add_message("アプリケーションが起動しました。印刷: Windows標準機能を使用（デスクトップ/output/日時フォルダに一時保存）", "info")
 
     def browse_directory(self):
         """ディレクトリを選択"""
@@ -404,16 +346,19 @@ class PdfKeywordPrinter(tk.Tk):
         if directory:
             self.directory_var.set(directory)
             self.status_var.set(f"選択: {directory}")
+            self.add_message(f"ディレクトリを選択しました: {directory}", "info")
 
     def search_pdf_files(self):
         """PDFファイルを検索"""
         directory = self.directory_var.get()
         if not directory or not os.path.isdir(directory):
             self.status_var.set("エラー: ディレクトリを選択してください。")
+            self.add_message("エラー: ディレクトリを選択してください。", "error")
             messagebox.showerror("エラー", "ディレクトリを選択してください。")
             return
 
         self.status_var.set("PDFファイルを検索中...")
+        self.add_message("PDFファイルを検索中...", "info")
         
         # バックグラウンドで検索
         threading.Thread(
@@ -439,10 +384,12 @@ class PdfKeywordPrinter(tk.Tk):
                 self.pdf_hit_info = pdf_hit_info
                 self._update_file_list()
                 self.status_var.set(f"検索完了: {len(pdf_files)}個のPDFファイルを発見")
+                self.add_message(f"検索完了: {len(pdf_files)}個のPDFファイルを発見", "success")
             self.after(0, update_ui)
         except Exception as e:
             def show_error():
                 self.status_var.set(f"検索エラー: {e}")
+                self.add_message(f"検索エラー: {e}", "error")
                 messagebox.showerror("エラー", f"PDFファイル検索中にエラーが発生しました: {e}")
             self.after(0, show_error)
 
@@ -517,12 +464,14 @@ class PdfKeywordPrinter(tk.Tk):
         hit_pdfs = [pdf for pdf, pages in self.pdf_hit_info.items() if pages]
         if not hit_pdfs:
             self.status_var.set("エラー: キーワードに該当するPDFがありません。")
+            self.add_message("エラー: キーワードに該当するPDFがありません。", "error")
             return
 
         keyword = self.keyword_var.get().strip()
         printer = self.printer_var.get()
         self._set_ui_state("disabled")
         self.status_var.set(f"一括印刷処理中...（{len(hit_pdfs)}件）")
+        self.add_message(f"一括印刷処理中...（{len(hit_pdfs)}件）", "info")
         threading.Thread(
             target=self._process_batch_print,
             args=(hit_pdfs, keyword, printer),
@@ -536,10 +485,12 @@ class PdfKeywordPrinter(tk.Tk):
 
         if not directory or not os.path.isdir(directory):
             self.status_var.set("エラー: ディレクトリを選択してください。")
+            self.add_message("エラー: ディレクトリを選択してください。", "error")
             return False
         
         if not keyword:
             self.status_var.set("エラー: 検索キーワードを入力してください。")
+            self.add_message("エラー: 検索キーワードを入力してください。", "error")
             return False
 
         # 依存パッケージチェック
@@ -555,6 +506,7 @@ class PdfKeywordPrinter(tk.Tk):
         
         if missing:
             self.status_var.set(f"エラー: 必要なパッケージがありません: {', '.join(missing)} (pip install ...)")
+            self.add_message(f"エラー: 必要なパッケージがありません: {', '.join(missing)} (pip install ...)", "error")
             return False
 
         return True
@@ -587,8 +539,9 @@ class PdfKeywordPrinter(tk.Tk):
             self._done(f"エラー: {e}", error=True)
 
     def _process_and_print_single(self, pdf_path: str, keyword: str, printer: str):
-        """単一ファイルの印刷処理"""
+        """単一ファイルの印刷処理（UltraThink対応）"""
         temp_pdf = None
+        output_pdf = None
         try:
             pages = PdfProcessor.find_keyword_pages(pdf_path, keyword)
             if not pages:
@@ -597,58 +550,115 @@ class PdfKeywordPrinter(tk.Tk):
 
             temp_pdf = PdfProcessor.extract_pages(pdf_path, pages)
             
-            # デスクトップにコピーして印刷を試行
-            desktop_pdf = self._copy_to_desktop(temp_pdf)
+            # ファイルの安定化を待つ
+            time.sleep(Constants.FILE_STABILITY_WAIT)
             
+            # デスクトップ/output/日時フォルダにファイルをコピー
+            output_pdf = self._copy_to_desktop(temp_pdf, pdf_path, keyword)
+            
+            # 出力ファイルで印刷を試行
             try:
-                PrinterManager.print_pdf(desktop_pdf, printer)
+                PrinterManager.print_pdf(output_pdf, printer)
                 time.sleep(Constants.FILE_ACCESS_WAIT)
-            finally:
-                self._cleanup_temp_file(desktop_pdf)
+            except Exception as e:
+                raise RuntimeError(f"印刷に失敗しました: {e}")
             
-            self._cleanup_temp_file(temp_pdf)
             self._done(f"印刷完了 (ページ: {', '.join(map(str, [p+1 for p in pages]))})", printed=True)
             
         except Exception as e:
-            self._cleanup_temp_file(temp_pdf)
             self._done(f"エラー: {e}", error=True)
+        finally:
+            # 一時ファイルと出力ファイルをクリーンアップ
+            self._cleanup_temp_file(temp_pdf)
+            #self._cleanup_temp_file(output_pdf)
 
     def _process_batch_print(self, pdf_files: List[str], keyword: str, printer: str):
+        """一括印刷処理（UltraThink対応）"""
         processed_count = 0
         error_count = 0
         temp_files = []
+        output_files = []
         try:
             for i, pdf_path in enumerate(pdf_files):
+                temp_pdf = None
+                output_pdf = None
                 try:
                     self.status_var.set(f"一括印刷中... ({i+1}/{len(pdf_files)})")
                     pages = PdfProcessor.find_keyword_pages(pdf_path, keyword)
                     if not pages:
                         continue
+                    
                     temp_pdf = PdfProcessor.extract_pages(pdf_path, pages)
                     temp_files.append(temp_pdf)
-                    desktop_pdf = self._copy_to_desktop(temp_pdf)
+                    
+                    # ファイルの安定化を待つ
+                    time.sleep(Constants.FILE_STABILITY_WAIT)
+                    
+                    # デスクトップ/output/日時フォルダにファイルをコピー
+                    output_pdf = self._copy_to_desktop(temp_pdf, pdf_path, keyword)
+                    output_files.append(output_pdf)
+                    
+                    # 出力ファイルで印刷を試行
                     try:
-                        PrinterManager.print_pdf(desktop_pdf, printer)
+                        PrinterManager.print_pdf(output_pdf, printer)
                         time.sleep(Constants.FILE_ACCESS_WAIT)
                         processed_count += 1
-                    finally:
-                        self._cleanup_temp_file(desktop_pdf)
+                    except Exception as e:
+                        error_count += 1
+                        print(f"印刷エラー ({pdf_path}): {e}")
+                            
                 except Exception as e:
                     error_count += 1
                     print(f"エラー ({pdf_path}): {e}")
-            for temp_file in temp_files:
-                self._cleanup_temp_file(temp_file)
+                finally:
+                    # 個別ファイルのクリーンアップ
+                    self._cleanup_temp_file(temp_pdf)
+                    self._cleanup_temp_file(output_pdf)
+            
             self._done(f"一括印刷完了: {processed_count}件成功, {error_count}件エラー（ヒットPDFのみ）", printed=True)
         except Exception as e:
+            self._done(f"一括印刷エラー: {e}", error=True)
+        finally:
+            # 残りのファイルをクリーンアップ
             for temp_file in temp_files:
                 self._cleanup_temp_file(temp_file)
-            self._done(f"一括印刷エラー: {e}", error=True)
+            for output_file in output_files:
+                self._cleanup_temp_file(output_file)
 
-    def _copy_to_desktop(self, temp_pdf: str) -> str:
-        """一時ファイルをデスクトップにコピー"""
+    def _copy_to_desktop(self, temp_pdf: str, original_pdf_path: str = None, keyword: str = None) -> str:
+        """一時ファイルをデスクトップ/output/日時フォルダにコピー"""
+        # デスクトップフォルダのパスを取得
         desktop_path = os.path.join(os.path.expanduser("~"), "Desktop")
-        filename = os.path.basename(temp_pdf)
-        desktop_pdf = os.path.join(desktop_path, filename)
+        
+        # outputフォルダを作成
+        output_dir = os.path.join(desktop_path, Constants.OUTPUT_FOLDER_NAME)
+        if not os.path.exists(output_dir):
+            os.makedirs(output_dir)
+
+        # 日時フォルダを作成
+        current_datetime = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+        datetime_dir = os.path.join(output_dir, current_datetime)
+        if not os.path.exists(datetime_dir):
+            os.makedirs(datetime_dir)
+
+        # ファイル名を生成
+        if original_pdf_path and keyword:
+            # 元のPDFファイル名を取得
+            original_filename = os.path.splitext(os.path.basename(original_pdf_path))[0]
+            # キーワードを安全なファイル名に変換
+            safe_keyword = self._make_safe_filename(keyword)
+            # 新しいファイル名を生成（長さ制限を考慮）
+            base_filename = f"{original_filename}_{safe_keyword}抽出版"
+            # ファイル名の長さを制限（拡張子を含めて255文字以内）
+            if len(base_filename) > 240:  # .pdf の5文字を考慮
+                base_filename = base_filename[:240]
+            new_filename = f"{base_filename}.pdf"
+        else:
+            # フォールバック: 元の一時ファイル名を使用
+            filename = os.path.basename(temp_pdf)
+            new_filename = filename
+        
+        desktop_pdf = os.path.join(datetime_dir, new_filename)
         
         try:
             shutil.copy2(temp_pdf, desktop_pdf)
@@ -656,6 +666,26 @@ class PdfKeywordPrinter(tk.Tk):
         except Exception:
             # デスクトップコピーが失敗した場合は元のファイルを使用
             return temp_pdf
+
+    def _make_safe_filename(self, filename: str) -> str:
+        """ファイル名を安全な形式に変換"""
+        # Windowsで使用できない文字を置換
+        invalid_chars = '<>:"/\\|?*'
+        for char in invalid_chars:
+            filename = filename.replace(char, '_')
+        
+        # 連続するアンダースコアを単一のアンダースコアに置換
+        while '__' in filename:
+            filename = filename.replace('__', '_')
+        
+        # 先頭と末尾のアンダースコアを削除
+        filename = filename.strip('_')
+        
+        # 空文字列の場合はデフォルト値を設定
+        if not filename:
+            filename = "keyword"
+        
+        return filename
 
     def _cleanup_temp_file(self, file_path: Optional[str]):
         """一時ファイルを削除"""
@@ -670,7 +700,57 @@ class PdfKeywordPrinter(tk.Tk):
         def finish():
             self._set_ui_state("normal")
             self.status_var.set(msg)
+            
+            # メッセージエリアにも追加
+            if error:
+                self.add_message(msg, "error")
+            elif preview:
+                self.add_message(msg, "info")
+            elif printed:
+                self.add_message(msg, "success")
+            else:
+                self.add_message(msg, "info")
         self.after(0, finish)
+
+    def add_message(self, message: str, message_type: str = "info"):
+        """メッセージエリアにメッセージを追加"""
+        def update_message():
+            self.message_text.configure(state="normal")
+            
+            # タイムスタンプを追加
+            timestamp = time.strftime("%H:%M:%S")
+            
+            # メッセージタイプに応じて色を設定
+            if message_type == "error":
+                tag = "error"
+                self.message_text.tag_config("error", foreground="red")
+            elif message_type == "success":
+                tag = "success"
+                self.message_text.tag_config("success", foreground="green")
+            elif message_type == "warning":
+                tag = "warning"
+                self.message_text.tag_config("warning", foreground="orange")
+            else:
+                tag = "info"
+                self.message_text.tag_config("info", foreground="black")
+            
+            # メッセージを追加
+            self.message_text.insert("end", f"[{timestamp}] {message}\n", tag)
+            
+            # 自動スクロール
+            self.message_text.see("end")
+            self.message_text.configure(state="disabled")
+        
+        self.after(0, update_message)
+
+    def clear_messages(self):
+        """メッセージエリアをクリア"""
+        def clear():
+            self.message_text.configure(state="normal")
+            self.message_text.delete(1.0, "end")
+            self.message_text.configure(state="disabled")
+        
+        self.after(0, clear)
 
 
 if __name__ == "__main__":
