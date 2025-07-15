@@ -37,6 +37,8 @@ from pypdf import PdfReader, PdfWriter
 # Printer handling (optional)
 try:
     import win32print
+    import win32api
+    import win32con
     PRINTER_SUPPORT = True
 except ImportError:
     PRINTER_SUPPORT = False
@@ -52,19 +54,25 @@ class Constants:
     KEYWORD_ENTRY_WIDTH = 30
     PRINTER_MENU_WIDTH = 40
     
-    # タイムアウト設定
-    PRINT_TIMEOUT = 5
-    FILE_ACCESS_WAIT = 0.5
+    # タイムアウト設定（印刷信頼性を重視）
+    PRINT_TIMEOUT = 10
+    FILE_ACCESS_WAIT = 2
     
     # Adobe Acrobat印刷対応設定
     PRINT_RETRY_COUNT = 3
     PRINT_RETRY_DELAY = 2
     
-    # 印刷ジョブ送信後の待機時間（削除予定）
-    PRINT_JOB_WAIT = 0.1
+    # 印刷ジョブ送信後の待機時間（印刷信頼性のため必要）
+    PRINT_JOB_WAIT = 3.0  # Adobeが印刷ジョブを送信するまで3秒
     
-    # 一括印刷時の最小待機時間
-    BATCH_PRINT_WAIT = 0.5
+    # 印刷ジョブ送信確認のタイムアウト
+    PRINT_JOB_SENT_TIMEOUT = 10  # 印刷ジョブ送信確認のタイムアウト（秒）
+    
+    # 印刷ジョブ完了待機のタイムアウト
+    PRINT_JOB_TIMEOUT = 60  # 印刷ジョブ完了待機のタイムアウト（秒）
+    
+    # 一括印刷時の最小待機時間（印刷ジョブ監視に置き換え）
+    BATCH_PRINT_WAIT = 0.5  # 印刷ジョブ監視の間隔
     
     # ローディング表示設定
     LOADING_DOT_INTERVAL = 500  # ミリ秒
@@ -273,6 +281,93 @@ class PrinterManager:
             return "(既定)"
     
     @staticmethod
+    def wait_for_print_job_completion(printer_name: str, timeout: int = 60) -> bool:
+        """印刷ジョブの完了を待機"""
+        if not PRINTER_SUPPORT:
+            return True
+        
+        try:
+            # プリンタハンドルを取得
+            if printer_name and printer_name != "(既定)":
+                printer_handle = win32print.OpenPrinter(printer_name)
+            else:
+                printer_handle = win32print.OpenPrinter(win32print.GetDefaultPrinter())
+            
+            start_time = time.time()
+            
+            while time.time() - start_time < timeout:
+                try:
+                    # 印刷ジョブの状態を取得
+                    jobs = win32print.EnumJobs(printer_handle, 0, 999)
+                    
+                    # 印刷中のジョブがあるかチェック
+                    printing_jobs = [job for job in jobs if job['Status'] in [
+                        win32print.JOB_STATUS_PRINTING,
+                        win32print.JOB_STATUS_SPOOLING
+                    ]]
+                    
+                    if not printing_jobs:
+                        print("印刷ジョブ完了を確認")
+                        win32print.ClosePrinter(printer_handle)
+                        return True
+                    
+                    print(f"印刷ジョブ処理中... ({len(printing_jobs)}件)")
+                    time.sleep(1)  # 1秒待機
+                    
+                except Exception as e:
+                    print(f"印刷ジョブ状態確認エラー: {e}")
+                    break
+            
+            win32print.ClosePrinter(printer_handle)
+            print(f"印刷ジョブ待機タイムアウト ({timeout}秒)")
+            return False
+            
+        except Exception as e:
+            print(f"印刷ジョブ監視エラー: {e}")
+            return True  # エラーの場合は成功とみなす
+    
+    @staticmethod
+    def check_print_job_sent(printer_name: str, timeout: int = 10) -> bool:
+        """印刷ジョブがプリンタに送信されたかを確認"""
+        if not PRINTER_SUPPORT:
+            return True
+        
+        try:
+            # プリンタハンドルを取得
+            if printer_name and printer_name != "(既定)":
+                printer_handle = win32print.OpenPrinter(printer_name)
+            else:
+                printer_handle = win32print.OpenPrinter(win32print.GetDefaultPrinter())
+            
+            start_time = time.time()
+            
+            while time.time() - start_time < timeout:
+                try:
+                    # 印刷ジョブの状態を取得
+                    jobs = win32print.EnumJobs(printer_handle, 0, 999)
+                    
+                    # 印刷ジョブが存在するかチェック
+                    if jobs:
+                        print(f"印刷ジョブ送信確認: {len(jobs)}件のジョブを検出")
+                        win32print.ClosePrinter(printer_handle)
+                        return True
+                    
+                    print("印刷ジョブ送信待機中...")
+                    time.sleep(0.5)  # 0.5秒待機
+                    
+                except Exception as e:
+                    print(f"印刷ジョブ送信確認エラー: {e}")
+                    break
+            
+            win32print.ClosePrinter(printer_handle)
+            print(f"印刷ジョブ送信確認タイムアウト ({timeout}秒)")
+            return False
+            
+        except Exception as e:
+            print(f"印刷ジョブ送信確認エラー: {e}")
+            return False
+    
+    @staticmethod
     def check_adobe_acrobat() -> Dict[str, any]:
         """Adobe Acrobatの検出状況を確認"""
         acro_paths = [
@@ -344,20 +439,47 @@ class PrinterManager:
                     shell=False
                 )
                 
-                # 印刷ジョブ送信は即座に完了するため、プロセスを即座に終了
+                # 印刷ジョブ送信のための適切な待機時間
+                print("印刷ジョブ送信中...")
+                time.sleep(3)  # Adobeが印刷ジョブを送信するまで3秒待機
+                
+                # 印刷ジョブがプリンタに送信されたかを確認
+                print("印刷ジョブ送信確認中...")
+                job_sent = PrinterManager.check_print_job_sent(printer, timeout=10)
+                
+                if job_sent:
+                    print("印刷ジョブ送信確認完了")
+                    
+                    # 印刷ジョブの完了を待機
+                    print("印刷ジョブ完了を待機中...")
+                    job_completed = PrinterManager.wait_for_print_job_completion(printer, timeout=60)
+                    
+                    if job_completed:
+                        print("印刷ジョブ完了を確認")
+                    else:
+                        print("印刷ジョブ待機タイムアウト")
+                else:
+                    print("印刷ジョブ送信確認失敗 - Adobeプロセスを延長待機")
+                    # 印刷ジョブ送信が確認できない場合は追加待機
+                    time.sleep(5)  # 追加で5秒待機
+                
+                # プロセスがまだ実行中の場合は終了を試行
                 if process.poll() is None:
+                    print("Adobeプロセス終了中...")
                     try:
-                        # プロセスを終了（印刷ジョブは既に送信済み）
+                        # プロセスを終了（印刷ジョブは完了済み）
                         process.terminate()
-                        # 終了を待つ（最大1秒）
-                        process.wait(timeout=1)
+                        # 終了を待つ（最大3秒）
+                        process.wait(timeout=3)
+                        print("Adobeプロセス正常終了")
                     except subprocess.TimeoutExpired:
                         # 強制終了
+                        print("Adobeプロセス強制終了")
                         process.kill()
                         process.wait()
                 else:
                     # プロセスが既に終了している場合
-                    pass
+                    print("Adobeプロセスは既に終了済み")
                 
                 return
                 
@@ -369,6 +491,27 @@ class PrinterManager:
         # Adobe Acrobat が存在しない場合のフォールバック
         try:
             os.startfile(pdf_path, "print")
+            # 印刷ジョブ送信のための適切な待機時間
+            time.sleep(3)  # 印刷ジョブ送信のため3秒待機
+            
+            # 印刷ジョブがプリンタに送信されたかを確認
+            print("フォールバック印刷ジョブ送信確認中...")
+            job_sent = PrinterManager.check_print_job_sent(printer, timeout=10)
+            
+            if job_sent:
+                print("フォールバック印刷ジョブ送信確認完了")
+                
+                # 印刷ジョブの完了を待機
+                print("フォールバック印刷ジョブ完了を待機中...")
+                job_completed = PrinterManager.wait_for_print_job_completion(printer, timeout=60)
+                
+                if job_completed:
+                    print("フォールバック印刷ジョブ完了を確認")
+                else:
+                    print("フォールバック印刷ジョブ待機タイムアウト")
+            else:
+                print("フォールバック印刷ジョブ送信確認失敗")
+            
             return
         except Exception as e:
             raise RuntimeError(f"印刷に失敗しました: {e}")
@@ -800,6 +943,8 @@ class PdfKeywordPrinter(tk.Tk):
             
             # 印刷を実行
             PrinterManager.print_pdf(temp_pdf, printer)
+            # 印刷処理完了のための適切な待機時間
+            time.sleep(Constants.FILE_ACCESS_WAIT)
             
             self._done(f"印刷完了 (ページ: {', '.join(map(str, [p+1 for p in pages]))})", printed=True)
             
@@ -827,8 +972,15 @@ class PdfKeywordPrinter(tk.Tk):
                     
                     # 印刷を実行
                     PrinterManager.print_pdf(temp_pdf, printer)
-                    # 印刷間の待機時間
-                    time.sleep(Constants.BATCH_PRINT_WAIT)
+                    # 印刷ジョブ完了を待機（1件1件確実に処理）
+                    print(f"一括印刷 {i+1}/{len(pdf_files)}: 印刷ジョブ完了を待機中...")
+                    job_completed = PrinterManager.wait_for_print_job_completion(printer, timeout=60)
+                    
+                    if job_completed:
+                        print(f"一括印刷 {i+1}/{len(pdf_files)}: 印刷ジョブ完了")
+                    else:
+                        print(f"一括印刷 {i+1}/{len(pdf_files)}: 印刷ジョブ待機タイムアウト")
+                    
                     processed_count += 1
                     self.add_message(f"印刷成功: {os.path.basename(pdf_path)} (ページ: {', '.join(map(str, [p+1 for p in pages]))})", "success")
                             
