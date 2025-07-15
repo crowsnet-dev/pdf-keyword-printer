@@ -56,13 +56,9 @@ class Constants:
     PRINT_TIMEOUT = 30
     FILE_ACCESS_WAIT = 5
     
-    # UltraThinkプリンタ対応の追加設定
+    # Adobe Acrobat印刷対応設定
     PRINT_RETRY_COUNT = 3
     PRINT_RETRY_DELAY = 2
-    FILE_STABILITY_WAIT = 3
-    
-    # 出力フォルダ設定
-    OUTPUT_FOLDER_NAME = "output"
 
 
 class PdfProcessor:
@@ -356,9 +352,9 @@ class PdfKeywordPrinter(tk.Tk):
             self.printer_var.set("(既定)")
 
     def _check_printing_capabilities(self):
-        """Windows標準印刷機能の確認"""
-        self.status_var.set("印刷: Windows標準機能を使用（デスクトップ/output/日時フォルダに一時保存）")
-        self.add_message("アプリケーションが起動しました。印刷: Windows標準機能を使用（デスクトップ/output/日時フォルダに一時保存）", "info")
+        """Adobe Acrobat印刷機能の確認"""
+        self.status_var.set("印刷: Adobe Acrobatを使用（一時ファイルから直接印刷）")
+        self.add_message("アプリケーションが起動しました。印刷: Adobe Acrobatを使用（一時ファイルから直接印刷）", "info")
 
     def browse_directory(self):
         """ディレクトリを選択"""
@@ -559,9 +555,8 @@ class PdfKeywordPrinter(tk.Tk):
             self._done(f"エラー: {e}", error=True)
 
     def _process_and_print_single(self, pdf_path: str, keyword: str, printer: str):
-        """単一ファイルの印刷処理（UltraThink対応）"""
+        """単一ファイルの印刷処理（Adobe Acrobat使用）"""
         temp_pdf = None
-        output_pdf = None
         try:
             pages = PdfProcessor.find_keyword_pages(pdf_path, keyword)
             if not pages:
@@ -569,16 +564,11 @@ class PdfKeywordPrinter(tk.Tk):
                 return
 
             temp_pdf = PdfProcessor.extract_pages(pdf_path, pages)
+            self.temp_pdf_paths.append(temp_pdf)
             
-            # ファイルの安定化を待つ
-            time.sleep(Constants.FILE_STABILITY_WAIT)
-            
-            # デスクトップ/output/日時フォルダにファイルをコピー
-            output_pdf = self._copy_to_desktop(temp_pdf, pdf_path, keyword)
-            
-            # 出力ファイルで印刷を試行
+            # 一時ファイルで印刷を試行
             try:
-                PrinterManager.print_pdf(output_pdf, printer)
+                PrinterManager.print_pdf(temp_pdf, printer)
                 time.sleep(Constants.FILE_ACCESS_WAIT)
             except Exception as e:
                 raise RuntimeError(f"印刷に失敗しました: {e}")
@@ -587,21 +577,15 @@ class PdfKeywordPrinter(tk.Tk):
             
         except Exception as e:
             self._done(f"エラー: {e}", error=True)
-        finally:
-            # 一時ファイルと出力ファイルをクリーンアップ
-            self._cleanup_temp_file(temp_pdf)
-            #self._cleanup_temp_file(output_pdf)
 
     def _process_batch_print(self, pdf_files: List[str], keyword: str, printer: str):
-        """一括印刷処理（UltraThink対応）"""
+        """一括印刷処理（Adobe Acrobat使用）"""
         processed_count = 0
         error_count = 0
         temp_files = []
-        output_files = []
         try:
             for i, pdf_path in enumerate(pdf_files):
                 temp_pdf = None
-                output_pdf = None
                 try:
                     self.status_var.set(f"一括印刷中... ({i+1}/{len(pdf_files)})")
                     pages = PdfProcessor.find_keyword_pages(pdf_path, keyword)
@@ -610,17 +594,11 @@ class PdfKeywordPrinter(tk.Tk):
                     
                     temp_pdf = PdfProcessor.extract_pages(pdf_path, pages)
                     temp_files.append(temp_pdf)
+                    self.temp_pdf_paths.append(temp_pdf)
                     
-                    # ファイルの安定化を待つ
-                    time.sleep(Constants.FILE_STABILITY_WAIT)
-                    
-                    # デスクトップ/output/日時フォルダにファイルをコピー
-                    output_pdf = self._copy_to_desktop(temp_pdf, pdf_path, keyword)
-                    output_files.append(output_pdf)
-                    
-                    # 出力ファイルで印刷を試行
+                    # 一時ファイルで印刷を試行
                     try:
-                        PrinterManager.print_pdf(output_pdf, printer)
+                        PrinterManager.print_pdf(temp_pdf, printer)
                         time.sleep(Constants.FILE_ACCESS_WAIT)
                         processed_count += 1
                     except Exception as e:
@@ -630,82 +608,12 @@ class PdfKeywordPrinter(tk.Tk):
                 except Exception as e:
                     error_count += 1
                     print(f"エラー ({pdf_path}): {e}")
-                finally:
-                    # 個別ファイルのクリーンアップ
-                    self._cleanup_temp_file(temp_pdf)
-                    self._cleanup_temp_file(output_pdf)
             
             self._done(f"一括印刷完了: {processed_count}件成功, {error_count}件エラー（ヒットPDFのみ）", printed=True)
         except Exception as e:
             self._done(f"一括印刷エラー: {e}", error=True)
-        finally:
-            # 残りのファイルをクリーンアップ
-            for temp_file in temp_files:
-                self._cleanup_temp_file(temp_file)
-            for output_file in output_files:
-                self._cleanup_temp_file(output_file)
 
-    def _copy_to_desktop(self, temp_pdf: str, original_pdf_path: str = None, keyword: str = None) -> str:
-        """一時ファイルをデスクトップ/output/日時フォルダにコピー"""
-        # デスクトップフォルダのパスを取得
-        desktop_path = os.path.join(os.path.expanduser("~"), "Desktop")
-        
-        # outputフォルダを作成
-        output_dir = os.path.join(desktop_path, Constants.OUTPUT_FOLDER_NAME)
-        if not os.path.exists(output_dir):
-            os.makedirs(output_dir)
 
-        # 日時フォルダを作成
-        current_datetime = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-        datetime_dir = os.path.join(output_dir, current_datetime)
-        if not os.path.exists(datetime_dir):
-            os.makedirs(datetime_dir)
-
-        # ファイル名を生成
-        if original_pdf_path and keyword:
-            # 元のPDFファイル名を取得
-            original_filename = os.path.splitext(os.path.basename(original_pdf_path))[0]
-            # キーワードを安全なファイル名に変換
-            safe_keyword = self._make_safe_filename(keyword)
-            # 新しいファイル名を生成（長さ制限を考慮）
-            base_filename = f"{original_filename}_{safe_keyword}抽出版"
-            # ファイル名の長さを制限（拡張子を含めて255文字以内）
-            if len(base_filename) > 240:  # .pdf の5文字を考慮
-                base_filename = base_filename[:240]
-            new_filename = f"{base_filename}.pdf"
-        else:
-            # フォールバック: 元の一時ファイル名を使用
-            filename = os.path.basename(temp_pdf)
-            new_filename = filename
-        
-        desktop_pdf = os.path.join(datetime_dir, new_filename)
-        
-        try:
-            shutil.copy2(temp_pdf, desktop_pdf)
-            return desktop_pdf
-        except Exception:
-            # デスクトップコピーが失敗した場合は元のファイルを使用
-            return temp_pdf
-
-    def _make_safe_filename(self, filename: str) -> str:
-        """ファイル名を安全な形式に変換"""
-        # Windowsで使用できない文字を置換
-        invalid_chars = '<>:"/\\|?*'
-        for char in invalid_chars:
-            filename = filename.replace(char, '_')
-        
-        # 連続するアンダースコアを単一のアンダースコアに置換
-        while '__' in filename:
-            filename = filename.replace('__', '_')
-        
-        # 先頭と末尾のアンダースコアを削除
-        filename = filename.strip('_')
-        
-        # 空文字列の場合はデフォルト値を設定
-        if not filename:
-            filename = "keyword"
-        
-        return filename
 
     def _cleanup_temp_file(self, file_path: Optional[str]):
         """一時ファイルを削除"""
