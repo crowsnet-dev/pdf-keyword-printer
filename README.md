@@ -127,5 +127,5 @@ MIT License
 
 ## 作者
 
-- **開発**: [CrowsNET Co., Ltd.]
+- **開発**: CrowsNET Co., Ltd.
 - **対応 OS**: Windows 10/11
