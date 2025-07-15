@@ -76,7 +76,7 @@ class PdfProcessor:
         return hit_pages
     
     @staticmethod
-    def extract_pages(pdf_path: str, page_indices: List[int]) -> str:
+    def extract_pages(pdf_path: str, page_indices: List[int], keyword: str = None) -> str:
         """指定されたページを抽出して一時ファイルに保存"""
         if not page_indices:
             raise ValueError("ページが指定されていません")
@@ -89,9 +89,22 @@ class PdfProcessor:
                 writer.add_page(reader.pages[idx])
         
         # 一時ファイル名を生成
-        timestamp = str(int(time.time()))
-        file_hash = hashlib.md5(pdf_path.encode()).hexdigest()[:8]
-        filename = f"extracted_{timestamp}_{file_hash}.pdf"
+        if keyword:
+            # 元のPDFファイル名を取得
+            original_filename = os.path.splitext(os.path.basename(pdf_path))[0]
+            # キーワードを安全なファイル名に変換
+            safe_keyword = PdfProcessor._make_safe_filename(keyword)
+            # 新しいファイル名を生成
+            base_filename = f"{original_filename}_{safe_keyword}抽出版"
+            # ファイル名の長さを制限（拡張子を含めて255文字以内）
+            if len(base_filename) > 240:  # .pdf の5文字を考慮
+                base_filename = base_filename[:240]
+            filename = f"{base_filename}.pdf"
+        else:
+            # フォールバック: 元の一時ファイル名を使用
+            timestamp = str(int(time.time()))
+            file_hash = hashlib.md5(pdf_path.encode()).hexdigest()[:8]
+            filename = f"extracted_{timestamp}_{file_hash}.pdf"
         
         # 一時ファイルを作成
         temp_dir = tempfile.gettempdir()
@@ -107,6 +120,27 @@ class PdfProcessor:
             raise RuntimeError(f"一時PDFファイルの作成に失敗しました（0バイト）")
         
         return temp_path
+    
+    @staticmethod
+    def _make_safe_filename(filename: str) -> str:
+        """ファイル名を安全な形式に変換"""
+        # Windowsで使用できない文字を置換
+        invalid_chars = '<>:"/\\|?*'
+        for char in invalid_chars:
+            filename = filename.replace(char, '_')
+        
+        # 連続するアンダースコアを単一のアンダースコアに置換
+        while '__' in filename:
+            filename = filename.replace('__', '_')
+        
+        # 先頭と末尾のアンダースコアを削除
+        filename = filename.strip('_')
+        
+        # 空文字列の場合はデフォルト値を設定
+        if not filename:
+            filename = "keyword"
+        
+        return filename
     
     @staticmethod
     def find_pdf_files(directory: str) -> List[str]:
@@ -150,20 +184,22 @@ class PrinterManager:
     
     @staticmethod
     def print_pdf(pdf_path: str, printer: str) -> None:
-        """PDFを印刷（Acrobat優先）"""
+        """PDFを印刷（Adobe Acrobat使用）"""
         if not os.path.exists(pdf_path):
             raise RuntimeError(f"PDFファイルが見つかりません: {pdf_path}")
 
-        # Acrobat パスを優先順位で設定
+        # Adobe Acrobat パスを確認
         acro_paths = [
             r"C:\Program Files\Adobe\Acrobat DC\Acrobat\Acrobat.exe",
             r"C:\Program Files (x86)\Adobe\Acrobat Reader DC\Reader\AcroRd32.exe",
             r"C:\Program Files (x86)\Adobe\Reader\AcroRd32.exe",
         ]
         
-        # Acrobat で印刷を試行
+        # Adobe Acrobat が存在するかチェック
+        adobe_exists = False
         for exe in acro_paths:
             if os.path.exists(exe):
+                adobe_exists = True
                 try:
                     subprocess.run(
                         [exe, "/t", pdf_path, printer],
@@ -171,27 +207,30 @@ class PrinterManager:
                         stdout=subprocess.DEVNULL,
                         stderr=subprocess.DEVNULL,
                     )
-                    time.sleep(Constants.FILE_ACCESS_WAIT)
                     return
                 except Exception as e:
-                    continue   # 次の候補へ
+                    continue
 
-        # Acrobat が見つからない場合のフォールバック
-        try:
-            # 既定アプリで print verb を試行
-            os.startfile(pdf_path, "print")
-            time.sleep(Constants.FILE_ACCESS_WAIT)
-            return
-        except Exception as e:
-            # 最後の手段として既定アプリを開く
+        # Adobe Acrobat が存在しない場合のみフォールバック
+        if not adobe_exists:
             try:
-                os.startfile(pdf_path)  # open verb
-                raise RuntimeError(
-                    "Adobe Acrobat が見つからないため、自動印刷できませんでした。\n"
-                    "Adobe Acrobat または Acrobat Reader をインストールしてください。"
-                )
-            except Exception as e2:
-                raise RuntimeError(f"印刷に失敗しました: {e2}")
+                # 既定アプリで print verb を試行
+                os.startfile(pdf_path, "print")
+                time.sleep(Constants.FILE_ACCESS_WAIT)
+                return
+            except Exception as e:
+                # 最後の手段として既定アプリを開く
+                try:
+                    os.startfile(pdf_path)  # open verb
+                    raise RuntimeError(
+                        "Adobe Acrobat が見つからないため、自動印刷できませんでした。\n"
+                        "Adobe Acrobat または Acrobat Reader をインストールしてください。"
+                    )
+                except Exception as e2:
+                    raise RuntimeError(f"印刷に失敗しました: {e2}")
+        else:
+            # Adobe Acrobat は存在するが印刷に失敗した場合
+            raise RuntimeError("Adobe Acrobat での印刷に失敗しました。")
 
 
 class PreviewManager:
@@ -544,7 +583,7 @@ class PdfKeywordPrinter(tk.Tk):
                 self._done("キーワードを含むページが見つかりませんでした。", error=True)
                 return
 
-            temp_pdf = PdfProcessor.extract_pages(pdf_path, pages)
+            temp_pdf = PdfProcessor.extract_pages(pdf_path, pages, keyword)
             self.temp_pdf_paths.append(temp_pdf)
 
             PreviewManager.preview_pdf(temp_pdf)
@@ -563,7 +602,7 @@ class PdfKeywordPrinter(tk.Tk):
                 self._done("キーワードを含むページが見つかりませんでした。", error=True)
                 return
 
-            temp_pdf = PdfProcessor.extract_pages(pdf_path, pages)
+            temp_pdf = PdfProcessor.extract_pages(pdf_path, pages, keyword)
             self.temp_pdf_paths.append(temp_pdf)
             
             # 一時ファイルで印刷を試行
@@ -592,7 +631,7 @@ class PdfKeywordPrinter(tk.Tk):
                     if not pages:
                         continue
                     
-                    temp_pdf = PdfProcessor.extract_pages(pdf_path, pages)
+                    temp_pdf = PdfProcessor.extract_pages(pdf_path, pages, keyword)
                     temp_files.append(temp_pdf)
                     self.temp_pdf_paths.append(temp_pdf)
                     
