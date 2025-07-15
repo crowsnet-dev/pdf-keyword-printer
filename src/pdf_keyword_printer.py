@@ -345,10 +345,10 @@ class PdfKeywordPrinter(tk.Tk):
         # ヘッダー
         self.header_row = tk.Frame(self.inner_frame)
         self.header_row.pack(fill="x")
-        tk.Label(self.header_row, text="ファイル名", width=30, anchor="w", relief="ridge").pack(side="left")
-        tk.Label(self.header_row, text="ヒット状況", width=12, anchor="center", relief="ridge").pack(side="left")
-        tk.Label(self.header_row, text="プレビュー", width=10, anchor="center", relief="ridge").pack(side="left")
-        tk.Label(self.header_row, text="印刷", width=10, anchor="center", relief="ridge").pack(side="left")
+        tk.Label(self.header_row, text="ファイル名", width=30, anchor="w", relief="ridge").grid(row=0, column=0, sticky="ew")
+        tk.Label(self.header_row, text="ヒット状況", width=12, anchor="center", relief="ridge").grid(row=0, column=1, sticky="ew")
+        tk.Label(self.header_row, text="プレビュー", width=10, anchor="center", relief="ridge").grid(row=0, column=2, sticky="ew")
+        tk.Label(self.header_row, text="印刷", width=10, anchor="center", relief="ridge").grid(row=0, column=3, sticky="ew")
 
         # 下部ボタンエリア
         button_frame = tk.Frame(main_frame)
@@ -447,32 +447,34 @@ class PdfKeywordPrinter(tk.Tk):
             self.after(0, show_error)
 
     def _update_file_list(self):
-        # 既存のPDF行のみ削除（ヘッダーは残す）
+        # 既存のPDF行・ヘッダーを全て削除
         for widget in self.inner_frame.winfo_children():
-            if widget is not self.header_row:
-                widget.destroy()
-        # 各PDF行を追加
-        for pdf_file in self.pdf_files:
-            row = tk.Frame(self.inner_frame)
-            row.pack(fill="x", pady=1)
+            widget.destroy()
+        # ヘッダー
+        header_font = ("Meiryo", 10, "bold")
+        tk.Label(self.inner_frame, text="ファイル名", width=30, anchor="w", relief="ridge", font=header_font).grid(row=0, column=0, sticky="nsew", padx=1, pady=1)
+        tk.Label(self.inner_frame, text="ヒット状況", width=12, anchor="center", relief="ridge", font=header_font).grid(row=0, column=1, sticky="nsew", padx=1, pady=1)
+        tk.Label(self.inner_frame, text="プレビュー", width=10, anchor="center", relief="ridge", font=header_font).grid(row=0, column=2, sticky="nsew", padx=1, pady=1)
+        tk.Label(self.inner_frame, text="印刷", width=10, anchor="center", relief="ridge", font=header_font).grid(row=0, column=3, sticky="nsew", padx=1, pady=1)
+        # 各PDF行
+        for i, pdf_file in enumerate(self.pdf_files):
             filename = os.path.basename(pdf_file)
             pages = self.pdf_hit_info.get(pdf_file, [])
-            tk.Label(row, text=filename, width=30, anchor="w").pack(side="left")
+            tk.Label(self.inner_frame, text=filename, width=30, anchor="w").grid(row=i+1, column=0, sticky="nsew", padx=1, pady=1)
             if pages:
                 hit_text = f"{len(pages)}ページ" if pages else "-"
-                hit_label = tk.Label(row, text=hit_text, width=12, anchor="center", fg="green")
-                hit_label.pack(side="left")
-                preview_btn = tk.Button(row, text="プレビュー", width=10, command=lambda f=pdf_file: self.preview_single_file(f))
-                preview_btn.pack(side="left", padx=2)
-                print_btn = tk.Button(row, text="印刷", width=10, command=lambda f=pdf_file: self.print_single_file(f))
-                print_btn.pack(side="left", padx=2)
+                tk.Label(self.inner_frame, text=hit_text, width=12, anchor="center", fg="green").grid(row=i+1, column=1, sticky="nsew", padx=1, pady=1)
+                tk.Button(self.inner_frame, text="プレビュー", width=10, command=lambda f=pdf_file: self.preview_single_file(f)).grid(row=i+1, column=2, sticky="nsew", padx=1, pady=1)
+                tk.Button(self.inner_frame, text="印刷", width=10, command=lambda f=pdf_file: self.print_single_file(f)).grid(row=i+1, column=3, sticky="nsew", padx=1, pady=1)
             else:
-                hit_label = tk.Label(row, text="該当なし", width=12, anchor="center", fg="gray")
-                hit_label.pack(side="left")
-                preview_btn = tk.Button(row, text="プレビュー", width=10, state="disabled")
-                preview_btn.pack(side="left", padx=2)
-                print_btn = tk.Button(row, text="印刷", width=10, state="disabled")
-                print_btn.pack(side="left", padx=2)
+                tk.Label(self.inner_frame, text="該当なし", width=12, anchor="center", fg="gray").grid(row=i+1, column=1, sticky="nsew", padx=1, pady=1)
+                tk.Button(self.inner_frame, text="プレビュー", width=10, state="disabled").grid(row=i+1, column=2, sticky="nsew", padx=1, pady=1)
+                tk.Button(self.inner_frame, text="印刷", width=10, state="disabled").grid(row=i+1, column=3, sticky="nsew", padx=1, pady=1)
+        # 列幅・weight・minsizeを統一
+        self.inner_frame.grid_columnconfigure(0, weight=3, minsize=220)
+        self.inner_frame.grid_columnconfigure(1, weight=1, minsize=90)
+        self.inner_frame.grid_columnconfigure(2, weight=1, minsize=80)
+        self.inner_frame.grid_columnconfigure(3, weight=1, minsize=80)
 
     def preview_single_file(self, pdf_path: str):
         """単一ファイルのプレビュー"""
