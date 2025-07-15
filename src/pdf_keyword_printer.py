@@ -8,11 +8,11 @@ Dependencies:
 Usage:
     Run this script with Python 3.11+ on Windows.
     The GUI lets users:
-        1. Browse and choose a PDF file.
+        1. Browse and choose a directory containing PDF files.
         2. Enter keyword (case‑insensitive).
         3. Optionally choose printer (defaults to system default).
-        4. Click "プレビュー" to extract pages containing the keyword and preview them in Edge.
-        5. Click "印刷" to extract pages containing the keyword and print them.
+        4. View list of PDF files with preview and print buttons for each.
+        5. Click "一括印刷" to print all PDFs containing the keyword.
         
 Note: Printing uses Windows standard functions only. No external PDF readers required.
 """
@@ -22,12 +22,13 @@ import sys
 import tempfile
 import threading
 import tkinter as tk
-from tkinter import filedialog, messagebox
-from typing import List, Optional, Tuple
+from tkinter import filedialog, messagebox, ttk
+from typing import List, Optional, Tuple, Dict
 import time
 import hashlib
 import shutil
 import subprocess
+import glob
 
 import pdfplumber
 from pypdf import PdfReader, PdfWriter
@@ -42,10 +43,10 @@ except ImportError:
 
 class Constants:
     """定数クラス"""
-    WINDOW_WIDTH = 640
-    WINDOW_HEIGHT = 280
+    WINDOW_WIDTH = 800
+    WINDOW_HEIGHT = 600
     PADDING = 6
-    BUTTON_WIDTH = 15
+    BUTTON_WIDTH = 12
     ENTRY_WIDTH = 48
     KEYWORD_ENTRY_WIDTH = 30
     PRINTER_MENU_WIDTH = 40
@@ -126,6 +127,17 @@ class PdfProcessor:
             raise RuntimeError(f"一時PDFファイルの作成に失敗しました（0バイト）")
         
         return temp_path
+    
+    @staticmethod
+    def find_pdf_files(directory: str) -> List[str]:
+        """指定ディレクトリ内のPDFファイルを検索（重複排除）"""
+        try:
+            pattern = os.path.join(directory, "**", "*.pdf")
+            files = set(glob.glob(pattern, recursive=True))
+            files.update(glob.glob(pattern.replace("*.pdf", "*.PDF"), recursive=True))
+            return sorted(files)
+        except Exception:
+            return []
 
 
 class PrinterManager:
@@ -264,13 +276,15 @@ class PdfKeywordPrinter(tk.Tk):
         super().__init__()
         self.title("PDF キーワード印刷ツール")
         self.geometry(f"{Constants.WINDOW_WIDTH}x{Constants.WINDOW_HEIGHT}")
-        self.resizable(False, False)
+        self.resizable(True, True)
 
         # State vars
-        self.pdf_path_var = tk.StringVar()
+        self.directory_var = tk.StringVar()
         self.keyword_var = tk.StringVar(value="部品出庫")
         self.printer_var = tk.StringVar()
         self.temp_pdf_paths = []  # 一時PDFのパスリスト（削除管理用）
+        self.pdf_files = []  # 検索されたPDFファイルのリスト
+        self.pdf_hit_info = {}  # {pdf_path: [ヒットページリスト]}
 
         # Build UI
         self._build_ui()
@@ -283,40 +297,70 @@ class PdfKeywordPrinter(tk.Tk):
 
     def _build_ui(self):
         """UIを構築"""
-        # PDF selection row
-        row1 = tk.Frame(self)
-        row1.pack(fill="x", padx=Constants.PADDING, pady=Constants.PADDING)
-        tk.Label(row1, text="PDF ファイル:").grid(row=0, column=0, sticky="w")
-        tk.Entry(row1, textvariable=self.pdf_path_var, width=Constants.ENTRY_WIDTH, 
+        main_frame = tk.Frame(self)
+        main_frame.pack(fill="both", expand=True, padx=Constants.PADDING, pady=Constants.PADDING)
+
+        # 上部設定エリア
+        settings_frame = tk.LabelFrame(main_frame, text="設定", padx=Constants.PADDING, pady=Constants.PADDING)
+        settings_frame.pack(fill="x", pady=(0, Constants.PADDING))
+
+        # ディレクトリ選択行
+        dir_frame = tk.Frame(settings_frame)
+        dir_frame.pack(fill="x", pady=Constants.PADDING)
+        tk.Label(dir_frame, text="対象ディレクトリ:").grid(row=0, column=0, sticky="w")
+        tk.Entry(dir_frame, textvariable=self.directory_var, width=Constants.ENTRY_WIDTH, 
                 state="readonly").grid(row=0, column=1, padx=(0, Constants.PADDING), sticky="ew")
-        tk.Button(row1, text="参照...", command=self.browse_pdf, width=10).grid(row=0, column=2, sticky="e")
-        row1.grid_columnconfigure(1, weight=1)
+        tk.Button(dir_frame, text="参照...", command=self.browse_directory, width=10).grid(row=0, column=2, sticky="e")
+        dir_frame.grid_columnconfigure(1, weight=1)
 
-        # Keyword row
-        row2 = tk.Frame(self)
-        row2.pack(fill="x", padx=Constants.PADDING, pady=Constants.PADDING)
-        tk.Label(row2, text="検索キーワード:").pack(side="left")
-        tk.Entry(row2, textvariable=self.keyword_var, width=Constants.KEYWORD_ENTRY_WIDTH).pack(side="left")
-
-        # Printer row
-        row3 = tk.Frame(self)
-        row3.pack(fill="x", padx=Constants.PADDING, pady=Constants.PADDING)
-        tk.Label(row3, text="プリンタ:").pack(side="left")
-        self.printer_menu = tk.OptionMenu(row3, self.printer_var, "")
+        # キーワードとプリンタ行
+        controls_frame = tk.Frame(settings_frame)
+        controls_frame.pack(fill="x", pady=Constants.PADDING)
+        tk.Label(controls_frame, text="検索キーワード:").pack(side="left")
+        tk.Entry(controls_frame, textvariable=self.keyword_var, width=Constants.KEYWORD_ENTRY_WIDTH).pack(side="left", padx=(0, Constants.PADDING))
+        tk.Label(controls_frame, text="プリンタ:").pack(side="left")
+        self.printer_menu = tk.OptionMenu(controls_frame, self.printer_var, "")
         self.printer_menu.config(width=Constants.PRINTER_MENU_WIDTH)
         self.printer_menu.pack(side="left")
 
-        # Action buttons
-        button_frame = tk.Frame(self)
-        button_frame.pack(pady=Constants.PADDING * 2)
-        tk.Button(button_frame, text="プレビュー", width=Constants.BUTTON_WIDTH, 
-                 command=self.run_preview).pack(side="left", padx=Constants.PADDING)
-        tk.Button(button_frame, text="印刷", width=Constants.BUTTON_WIDTH, 
-                 command=self.run_print).pack(side="left", padx=Constants.PADDING)
+        # 検索ボタン
+        search_frame = tk.Frame(settings_frame)
+        search_frame.pack(fill="x", pady=Constants.PADDING)
+        tk.Button(search_frame, text="PDFファイル検索", command=self.search_pdf_files, 
+                 width=Constants.BUTTON_WIDTH).pack(side="left")
 
-        # Status label
+        # PDFファイル一覧エリア（Canvas+Frame+Scrollbar）
+        list_frame = tk.LabelFrame(main_frame, text="PDFファイル一覧", padx=Constants.PADDING, pady=Constants.PADDING)
+        list_frame.pack(fill="both", expand=True, pady=(0, Constants.PADDING))
+        self.canvas = tk.Canvas(list_frame)
+        self.scrollbar = tk.Scrollbar(list_frame, orient="vertical", command=self.canvas.yview)
+        self.inner_frame = tk.Frame(self.canvas)
+        self.inner_frame.bind(
+            "<Configure>", lambda e: self.canvas.configure(scrollregion=self.canvas.bbox("all")))
+        self.canvas.create_window((0, 0), window=self.inner_frame, anchor="nw")
+        self.canvas.configure(yscrollcommand=self.scrollbar.set)
+        self.canvas.pack(side="left", fill="both", expand=True)
+        self.scrollbar.pack(side="right", fill="y")
+
+        # ヘッダー
+        self.header_row = tk.Frame(self.inner_frame)
+        self.header_row.pack(fill="x")
+        tk.Label(self.header_row, text="ファイル名", width=30, anchor="w", relief="ridge").pack(side="left")
+        tk.Label(self.header_row, text="ヒット状況", width=12, anchor="center", relief="ridge").pack(side="left")
+        tk.Label(self.header_row, text="プレビュー", width=10, anchor="center", relief="ridge").pack(side="left")
+        tk.Label(self.header_row, text="印刷", width=10, anchor="center", relief="ridge").pack(side="left")
+
+        # 下部ボタンエリア
+        button_frame = tk.Frame(main_frame)
+        button_frame.pack(fill="x", pady=Constants.PADDING)
+        tk.Button(button_frame, text="一括印刷", command=self.batch_print, 
+                 width=Constants.BUTTON_WIDTH).pack(side="right", padx=Constants.PADDING)
+
+        # ステータスラベル（下部に常時表示）
         self.status_var = tk.StringVar()
-        tk.Label(self, textvariable=self.status_var, fg="blue").pack()
+        status_frame = tk.Frame(self)
+        status_frame.pack(fill="x", side="bottom")
+        tk.Label(status_frame, textvariable=self.status_var, fg="blue", anchor="w", relief="sunken", height=2).pack(fill="x")
 
     def _setup_printers(self):
         """プリンタ設定"""
@@ -354,31 +398,146 @@ class PdfKeywordPrinter(tk.Tk):
         """Windows標準印刷機能の確認"""
         self.status_var.set("印刷: Windows標準機能を使用")
 
-    def browse_pdf(self):
-        """PDFファイルを選択"""
-        path = filedialog.askopenfilename(filetypes=[("PDF files", "*.pdf")])
-        if path:
-            if not path.lower().endswith('.pdf'):
-                messagebox.showerror("エラー", "PDFファイルを選択してください。")
-                return
-            self.pdf_path_var.set(path)
-            self.status_var.set(f"選択: {os.path.basename(path)}")
+    def browse_directory(self):
+        """ディレクトリを選択"""
+        directory = filedialog.askdirectory()
+        if directory:
+            self.directory_var.set(directory)
+            self.status_var.set(f"選択: {directory}")
+
+    def search_pdf_files(self):
+        """PDFファイルを検索"""
+        directory = self.directory_var.get()
+        if not directory or not os.path.isdir(directory):
+            self.status_var.set("エラー: ディレクトリを選択してください。")
+            messagebox.showerror("エラー", "ディレクトリを選択してください。")
+            return
+
+        self.status_var.set("PDFファイルを検索中...")
+        
+        # バックグラウンドで検索
+        threading.Thread(
+            target=self._search_pdf_files_background,
+            args=(directory,),
+            daemon=True
+        ).start()
+
+    def _search_pdf_files_background(self, directory: str):
+        """バックグラウンドでPDFファイルを検索"""
+        try:
+            pdf_files = PdfProcessor.find_pdf_files(directory)
+            pdf_hit_info = {}
+            keyword = self.keyword_var.get().strip()
+            for pdf_file in pdf_files:
+                try:
+                    pages = PdfProcessor.find_keyword_pages(pdf_file, keyword)
+                except Exception:
+                    pages = []
+                pdf_hit_info[pdf_file] = pages
+            def update_ui():
+                self.pdf_files = pdf_files
+                self.pdf_hit_info = pdf_hit_info
+                self._update_file_list()
+                self.status_var.set(f"検索完了: {len(pdf_files)}個のPDFファイルを発見")
+            self.after(0, update_ui)
+        except Exception as e:
+            def show_error():
+                self.status_var.set(f"検索エラー: {e}")
+                messagebox.showerror("エラー", f"PDFファイル検索中にエラーが発生しました: {e}")
+            self.after(0, show_error)
+
+    def _update_file_list(self):
+        # 既存のPDF行のみ削除（ヘッダーは残す）
+        for widget in self.inner_frame.winfo_children():
+            if widget is not self.header_row:
+                widget.destroy()
+        # 各PDF行を追加
+        for pdf_file in self.pdf_files:
+            row = tk.Frame(self.inner_frame)
+            row.pack(fill="x", pady=1)
+            filename = os.path.basename(pdf_file)
+            pages = self.pdf_hit_info.get(pdf_file, [])
+            tk.Label(row, text=filename, width=30, anchor="w").pack(side="left")
+            if pages:
+                hit_text = f"{len(pages)}ページ" if pages else "-"
+                hit_label = tk.Label(row, text=hit_text, width=12, anchor="center", fg="green")
+                hit_label.pack(side="left")
+                preview_btn = tk.Button(row, text="プレビュー", width=10, command=lambda f=pdf_file: self.preview_single_file(f))
+                preview_btn.pack(side="left", padx=2)
+                print_btn = tk.Button(row, text="印刷", width=10, command=lambda f=pdf_file: self.print_single_file(f))
+                print_btn.pack(side="left", padx=2)
+            else:
+                hit_label = tk.Label(row, text="該当なし", width=12, anchor="center", fg="gray")
+                hit_label.pack(side="left")
+                preview_btn = tk.Button(row, text="プレビュー", width=10, state="disabled")
+                preview_btn.pack(side="left", padx=2)
+                print_btn = tk.Button(row, text="印刷", width=10, state="disabled")
+                print_btn.pack(side="left", padx=2)
+
+    def preview_single_file(self, pdf_path: str):
+        """単一ファイルのプレビュー"""
+        if not self._validate_inputs():
+            return
+
+        keyword = self.keyword_var.get().strip()
+        
+        self._set_ui_state("disabled")
+        self.status_var.set("処理中...")
+
+        threading.Thread(
+            target=self._process_and_preview_single,
+            args=(pdf_path, keyword),
+            daemon=True
+        ).start()
+
+    def print_single_file(self, pdf_path: str):
+        """単一ファイルの印刷"""
+        if not self._validate_inputs():
+            return
+
+        keyword = self.keyword_var.get().strip()
+        printer = self.printer_var.get()
+        
+        self._set_ui_state("disabled")
+        self.status_var.set("処理中...")
+
+        threading.Thread(
+            target=self._process_and_print_single,
+            args=(pdf_path, keyword, printer),
+            daemon=True
+        ).start()
+
+    def batch_print(self):
+        if not self._validate_inputs():
+            return
+
+        # ヒットしたPDFのみを対象
+        hit_pdfs = [pdf for pdf, pages in self.pdf_hit_info.items() if pages]
+        if not hit_pdfs:
+            self.status_var.set("エラー: キーワードに該当するPDFがありません。")
+            return
+
+        keyword = self.keyword_var.get().strip()
+        printer = self.printer_var.get()
+        self._set_ui_state("disabled")
+        self.status_var.set(f"一括印刷処理中...（{len(hit_pdfs)}件）")
+        threading.Thread(
+            target=self._process_batch_print,
+            args=(hit_pdfs, keyword, printer),
+            daemon=True
+        ).start()
 
     def _validate_inputs(self) -> bool:
         """入力値の検証"""
-        pdf_path = self.pdf_path_var.get()
+        directory = self.directory_var.get()
         keyword = self.keyword_var.get().strip()
 
-        if not pdf_path or not os.path.isfile(pdf_path):
-            messagebox.showerror("エラー", "PDF ファイルを選択してください。")
+        if not directory or not os.path.isdir(directory):
+            self.status_var.set("エラー: ディレクトリを選択してください。")
             return False
         
         if not keyword:
-            messagebox.showerror("エラー", "検索キーワードを入力してください。")
-            return False
-        
-        if not pdf_path.lower().endswith('.pdf'):
-            messagebox.showerror("エラー", "PDFファイルを選択してください。")
+            self.status_var.set("エラー: 検索キーワードを入力してください。")
             return False
 
         # 依存パッケージチェック
@@ -393,48 +552,10 @@ class PdfKeywordPrinter(tk.Tk):
             missing.append('pypdf')
         
         if missing:
-            messagebox.showerror("依存パッケージ未導入", 
-                               f"必要なパッケージがありません: {', '.join(missing)}\n"
-                               f"コマンドプロンプトで\npip install {' '.join(missing)}\n"
-                               f"を実行してください。")
+            self.status_var.set(f"エラー: 必要なパッケージがありません: {', '.join(missing)} (pip install ...)")
             return False
 
         return True
-
-    def run_preview(self):
-        """プレビューボタンの処理"""
-        if not self._validate_inputs():
-            return
-
-        pdf_path = self.pdf_path_var.get()
-        keyword = self.keyword_var.get().strip()
-
-        self._set_ui_state("disabled")
-        self.status_var.set("処理中...")
-
-        threading.Thread(
-            target=self._process_and_preview,
-            args=(pdf_path, keyword),
-            daemon=True
-        ).start()
-
-    def run_print(self):
-        """印刷ボタンの処理"""
-        if not self._validate_inputs():
-            return
-
-        pdf_path = self.pdf_path_var.get()
-        keyword = self.keyword_var.get().strip()
-        printer = self.printer_var.get()
-
-        self._set_ui_state("disabled")
-        self.status_var.set("処理中...")
-
-        threading.Thread(
-            target=self._process_and_print,
-            args=(pdf_path, keyword, printer),
-            daemon=True
-        ).start()
 
     def _set_ui_state(self, state: str):
         """UIの有効/無効を切り替え"""
@@ -444,8 +565,8 @@ class PdfKeywordPrinter(tk.Tk):
             except tk.TclError:
                 pass  # not all widgets support state
 
-    def _process_and_preview(self, pdf_path: str, keyword: str):
-        """プレビュー処理"""
+    def _process_and_preview_single(self, pdf_path: str, keyword: str):
+        """単一ファイルのプレビュー処理"""
         temp_pdf = None
         try:
             pages = PdfProcessor.find_keyword_pages(pdf_path, keyword)
@@ -463,8 +584,8 @@ class PdfKeywordPrinter(tk.Tk):
             self._cleanup_temp_file(temp_pdf)
             self._done(f"エラー: {e}", error=True)
 
-    def _process_and_print(self, pdf_path: str, keyword: str, printer: str):
-        """印刷処理"""
+    def _process_and_print_single(self, pdf_path: str, keyword: str, printer: str):
+        """単一ファイルの印刷処理"""
         temp_pdf = None
         try:
             pages = PdfProcessor.find_keyword_pages(pdf_path, keyword)
@@ -489,6 +610,37 @@ class PdfKeywordPrinter(tk.Tk):
         except Exception as e:
             self._cleanup_temp_file(temp_pdf)
             self._done(f"エラー: {e}", error=True)
+
+    def _process_batch_print(self, pdf_files: List[str], keyword: str, printer: str):
+        processed_count = 0
+        error_count = 0
+        temp_files = []
+        try:
+            for i, pdf_path in enumerate(pdf_files):
+                try:
+                    self.status_var.set(f"一括印刷中... ({i+1}/{len(pdf_files)})")
+                    pages = PdfProcessor.find_keyword_pages(pdf_path, keyword)
+                    if not pages:
+                        continue
+                    temp_pdf = PdfProcessor.extract_pages(pdf_path, pages)
+                    temp_files.append(temp_pdf)
+                    desktop_pdf = self._copy_to_desktop(temp_pdf)
+                    try:
+                        PrinterManager.print_pdf(desktop_pdf, printer)
+                        time.sleep(Constants.FILE_ACCESS_WAIT)
+                        processed_count += 1
+                    finally:
+                        self._cleanup_temp_file(desktop_pdf)
+                except Exception as e:
+                    error_count += 1
+                    print(f"エラー ({pdf_path}): {e}")
+            for temp_file in temp_files:
+                self._cleanup_temp_file(temp_file)
+            self._done(f"一括印刷完了: {processed_count}件成功, {error_count}件エラー（ヒットPDFのみ）", printed=True)
+        except Exception as e:
+            for temp_file in temp_files:
+                self._cleanup_temp_file(temp_file)
+            self._done(f"一括印刷エラー: {e}", error=True)
 
     def _copy_to_desktop(self, temp_pdf: str) -> str:
         """一時ファイルをデスクトップにコピー"""
@@ -516,14 +668,6 @@ class PdfKeywordPrinter(tk.Tk):
         def finish():
             self._set_ui_state("normal")
             self.status_var.set(msg)
-            
-            if error:
-                messagebox.showerror("エラー", msg)
-            elif preview:
-                messagebox.showinfo("完了", "PDFを既定のアプリケーションで開きました。内容をご確認ください。")
-            elif printed:
-                messagebox.showinfo("完了", "選択したプリンタで印刷しました。")
-        
         self.after(0, finish)
 
 
