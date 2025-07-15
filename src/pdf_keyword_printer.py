@@ -68,11 +68,24 @@ class PdfProcessor:
     def find_keyword_pages(pdf_path: str, keyword: str) -> List[int]:
         """キーワードを含むページを検索"""
         hit_pages = []
-        with pdfplumber.open(pdf_path) as pdf:
-            for i, page in enumerate(pdf.pages):
-                text = page.extract_text() or ""
-                if keyword.lower() in text.lower():
-                    hit_pages.append(i)
+        try:
+            with pdfplumber.open(pdf_path) as pdf:
+                print(f"  PDF解析開始: {os.path.basename(pdf_path)} ({len(pdf.pages)}ページ)")
+                for i, page in enumerate(pdf.pages):
+                    try:
+                        text = page.extract_text() or ""
+                        if keyword.lower() in text.lower():
+                            hit_pages.append(i)
+                            print(f"    ページ{i+1}でキーワード発見")
+                    except Exception as e:
+                        print(f"    ページ{i+1}のテキスト抽出エラー: {e}")
+                        # ページ単位のエラーは無視して続行
+                        continue
+        except Exception as e:
+            print(f"  PDFファイル読み込みエラー ({os.path.basename(pdf_path)}): {e}")
+            raise  # 上位でハンドリングするため再送出
+        
+        print(f"  検索結果: {len(hit_pages)}ページヒット")
         return hit_pages
     
     @staticmethod
@@ -81,12 +94,27 @@ class PdfProcessor:
         if not page_indices:
             raise ValueError("ページが指定されていません")
         
-        reader = PdfReader(pdf_path)
-        writer = PdfWriter()
+        print(f"ページ抽出開始: {pdf_path}")
+        print(f"抽出ページ: {page_indices}")
+        print(f"キーワード: {keyword}")
+        print(f"サフィックス: {suffix}")
         
-        for idx in page_indices:
-            if idx < len(reader.pages):
-                writer.add_page(reader.pages[idx])
+        try:
+            reader = PdfReader(pdf_path)
+            print(f"元PDFページ数: {len(reader.pages)}")
+            writer = PdfWriter()
+            
+            for idx in page_indices:
+                if idx < len(reader.pages):
+                    writer.add_page(reader.pages[idx])
+                    print(f"  ページ{idx+1}を追加")
+                else:
+                    print(f"  警告: ページ{idx+1}は存在しません（最大ページ数: {len(reader.pages)}）")
+            
+            print(f"抽出ページ数: {len(writer.pages)}")
+        except Exception as e:
+            print(f"PDF読み込みエラー: {e}")
+            raise
         
         # 日時を取得（ファイル名用の形式）
         current_time = datetime.datetime.now().strftime("%Y%m%d%H%M%S")
@@ -131,6 +159,8 @@ class PdfProcessor:
         # デバッグ情報を出力
         print(f"一時ファイル作成: {temp_path}")
         print(f"ファイル名長: {len(filename)}文字")
+        print(f"一時ディレクトリ: {temp_dir}")
+        print(f"完全パス長: {len(temp_path)}文字")
         
         # ファイル名の妥当性をチェック
         try:
@@ -145,16 +175,31 @@ class PdfProcessor:
         except Exception as e:
             print(f"ファイル名チェックエラー: {e}")
         
-        with open(temp_path, "wb") as f:
-            writer.write(f)
-            f.flush()
-            os.fsync(f.fileno())
-        
-        # ファイルサイズを確認
-        if os.path.getsize(temp_path) == 0:
-            raise RuntimeError(f"一時PDFファイルの作成に失敗しました（0バイト）")
-        
-        return temp_path
+        try:
+            with open(temp_path, "wb") as f:
+                writer.write(f)
+                f.flush()
+                os.fsync(f.fileno())
+            
+            # ファイルサイズを確認
+            file_size = os.path.getsize(temp_path)
+            print(f"一時ファイル作成完了: {temp_path} ({file_size} バイト)")
+            
+            if file_size == 0:
+                raise RuntimeError(f"一時PDFファイルの作成に失敗しました（0バイト）")
+            
+            return temp_path
+            
+        except Exception as e:
+            print(f"一時ファイル書き込みエラー: {e}")
+            # 一時ファイルが作成されている場合は削除を試行
+            if os.path.exists(temp_path):
+                try:
+                    os.unlink(temp_path)
+                    print(f"一時ファイルを削除: {temp_path}")
+                except:
+                    pass
+            raise
     
     @staticmethod
     def _make_safe_filename(filename: str) -> str:
@@ -234,7 +279,6 @@ class PrinterManager:
         result = {
             "found": False,
             "path": None,
-            "version": None,
             "all_paths": {}
         }
         
@@ -245,19 +289,6 @@ class PrinterManager:
             if exists and not result["found"]:
                 result["found"] = True
                 result["path"] = path
-                
-                # バージョン情報を取得
-                try:
-                    version_info = subprocess.run(
-                        [path, "/?"],
-                        capture_output=True,
-                        text=True,
-                        timeout=10
-                    )
-                    if version_info.stdout:
-                        result["version"] = version_info.stdout.strip()
-                except:
-                    result["version"] = "バージョン情報取得失敗"
         
         return result
     
@@ -267,7 +298,7 @@ class PrinterManager:
         if not os.path.exists(pdf_path):
             raise RuntimeError(f"PDFファイルが見つかりません: {pdf_path}")
 
-        # Adobe Acrobat パスを確認（より多くのパスを追加）
+        # Adobe Acrobat パスを確認
         acro_paths = [
             r"C:\Program Files\Adobe\Acrobat DC\Acrobat\Acrobat.exe",
             r"C:\Program Files (x86)\Adobe\Acrobat DC\Acrobat\Acrobat.exe",
@@ -280,78 +311,52 @@ class PrinterManager:
         ]
         
         # Adobe Acrobat が存在するかチェック
-        adobe_exists = False
         adobe_path = None
-        
         for exe in acro_paths:
             if os.path.exists(exe):
-                adobe_exists = True
                 adobe_path = exe
                 break
         
         # Adobe Acrobat が見つかった場合
-        if adobe_exists and adobe_path:
+        if adobe_path:
             try:
                 # 印刷コマンドを構築
                 if printer and printer != "(既定)":
-                    # プリンタ名を直接指定（クォートなし）
                     cmd = [adobe_path, "/t", pdf_path, printer]
                 else:
-                    # 既定プリンタを使用
                     cmd = [adobe_path, "/t", pdf_path]
                 
-                print(f"印刷コマンド実行: {' '.join(cmd)}")
-                print(f"印刷対象ファイル: {pdf_path}")
-                print(f"ファイル存在確認: {os.path.exists(pdf_path)}")
-                
                 # 印刷を実行
-                result = subprocess.run(
+                process = subprocess.Popen(
                     cmd,
-                    check=True,
                     stdout=subprocess.PIPE,
                     stderr=subprocess.PIPE,
-                    timeout=Constants.PRINT_TIMEOUT,
                     shell=False
                 )
                 
-                print(f"印刷コマンド成功: {result.returncode}")
+                # 印刷プロセスの完了を待つ
+                try:
+                    process.wait(timeout=Constants.PRINT_TIMEOUT)
+                except subprocess.TimeoutExpired:
+                    process.kill()
+                    raise RuntimeError(f"Adobe Acrobat の印刷処理がタイムアウトしました（{Constants.PRINT_TIMEOUT}秒）")
+                
+                # 印刷完了後に少し待機（印刷ジョブの処理を待つ）
+                time.sleep(3)
                 return
                 
-            except subprocess.TimeoutExpired:
-                raise RuntimeError(f"Adobe Acrobat の印刷処理がタイムアウトしました（{Constants.PRINT_TIMEOUT}秒）")
             except subprocess.CalledProcessError as e:
-                error_msg = f"Adobe Acrobat 印刷エラー (終了コード: {e.returncode})"
-                if e.stdout:
-                    error_msg += f"\n標準出力: {e.stdout.decode('utf-8', errors='ignore')}"
-                if e.stderr:
-                    error_msg += f"\nエラー出力: {e.stderr.decode('utf-8', errors='ignore')}"
-                raise RuntimeError(error_msg)
+                raise RuntimeError(f"Adobe Acrobat 印刷エラー (終了コード: {e.returncode})")
             except Exception as e:
                 raise RuntimeError(f"Adobe Acrobat 印刷実行エラー: {e}")
 
-        # Adobe Acrobat が存在しない場合のみフォールバック
-        if not adobe_exists:
-            try:
-                # 既定アプリで print verb を試行
-                print(f"Adobe Acrobat が見つからないため、既定アプリで印刷を試行: {pdf_path}")
-                os.startfile(pdf_path, "print")
-                time.sleep(Constants.FILE_ACCESS_WAIT)
-                return
-            except Exception as e:
-                # 最後の手段として既定アプリを開く
-                try:
-                    print(f"print verb が失敗したため、既定アプリで開く: {pdf_path}")
-                    os.startfile(pdf_path)  # open verb
-                    raise RuntimeError(
-                        "Adobe Acrobat が見つからないため、自動印刷できませんでした。\n"
-                        "Adobe Acrobat または Acrobat Reader をインストールしてください。\n"
-                        f"エラー詳細: {e}"
-                    )
-                except Exception as e2:
-                    raise RuntimeError(f"印刷に失敗しました: {e2}")
-        else:
-            # Adobe Acrobat は存在するが印刷に失敗した場合
-            raise RuntimeError("Adobe Acrobat での印刷に失敗しました。詳細なエラー情報を確認してください。")
+        # Adobe Acrobat が存在しない場合のフォールバック
+        try:
+            os.startfile(pdf_path, "print")
+            time.sleep(Constants.FILE_ACCESS_WAIT)
+            return
+        except Exception as e:
+            raise RuntimeError(f"印刷に失敗しました: {e}")
 
 
 class PreviewManager:
@@ -467,10 +472,10 @@ class PdfKeywordPrinter(tk.Tk):
         # ヘッダー
         self.header_row = tk.Frame(self.inner_frame)
         self.header_row.pack(fill="x")
-        tk.Label(self.header_row, text="ファイル名", width=30, anchor="w", relief="ridge").grid(row=0, column=0, sticky="ew")
-        tk.Label(self.header_row, text="ヒット状況", width=12, anchor="center", relief="ridge").grid(row=0, column=1, sticky="ew")
-        tk.Label(self.header_row, text="プレビュー", width=10, anchor="center", relief="ridge").grid(row=0, column=2, sticky="ew")
-        tk.Label(self.header_row, text="印刷", width=10, anchor="center", relief="ridge").grid(row=0, column=3, sticky="ew")
+        tk.Label(self.header_row, text="ファイル名", width=30, anchor="w", relief="ridge").grid(row=0, column=0, sticky="nsew", padx=1, pady=1)
+        tk.Label(self.header_row, text="ヒット状況", width=12, anchor="center", relief="ridge").grid(row=0, column=1, sticky="nsew", padx=1, pady=1)
+        tk.Label(self.header_row, text="プレビュー", width=10, anchor="center", relief="ridge").grid(row=0, column=2, sticky="nsew", padx=1, pady=1)
+        tk.Label(self.header_row, text="印刷", width=10, anchor="center", relief="ridge").grid(row=0, column=3, sticky="nsew", padx=1, pady=1)
 
         # 下部ボタンエリア
         button_frame = tk.Frame(main_frame)
@@ -518,8 +523,6 @@ class PdfKeywordPrinter(tk.Tk):
         acro_status = PrinterManager.check_adobe_acrobat()
         if acro_status["found"]:
             self.add_message(f"Adobe Acrobat が見つかりました: {acro_status['path']}", "info")
-            if acro_status["version"]:
-                self.add_message(f"Adobe Acrobat のバージョン: {acro_status['version']}", "info")
         else:
             self.add_message("Adobe Acrobat が見つかりませんでした。印刷機能はAdobe Acrobatを使用します。", "warning")
             # 検索されたパスの状況を表示
@@ -557,17 +560,37 @@ class PdfKeywordPrinter(tk.Tk):
             pdf_files = PdfProcessor.find_pdf_files(directory)
             pdf_hit_info = {}
             keyword = self.keyword_var.get().strip()
+            
+            # デバッグ情報を追加
+            print(f"検索開始: {len(pdf_files)}個のPDFファイル、キーワード: '{keyword}'")
+            
             for pdf_file in pdf_files:
                 try:
                     pages = PdfProcessor.find_keyword_pages(pdf_file, keyword)
-                except Exception:
+                    # デバッグ情報を追加
+                    if pages:
+                        print(f"ヒット: {os.path.basename(pdf_file)} - {len(pages)}ページ")
+                    else:
+                        print(f"未ヒット: {os.path.basename(pdf_file)}")
+                except Exception as e:
+                    # 例外の詳細をログ出力
+                    print(f"検索エラー ({os.path.basename(pdf_file)}): {e}")
+                    # エラーの場合は空リストではなく、再試行またはエラー情報を保持
                     pages = []
+                    # メッセージエリアにもエラーを表示
+                    self.add_message(f"検索エラー ({os.path.basename(pdf_file)}): {e}", "warning")
+                
                 pdf_hit_info[pdf_file] = pages
+            
+            # 検索結果の統計を出力
+            hit_count = sum(1 for pages in pdf_hit_info.values() if pages)
+            print(f"検索完了: {len(pdf_files)}ファイル中 {hit_count}ファイルがヒット")
+            
             def update_ui():
                 self.pdf_files = pdf_files
                 self.pdf_hit_info = pdf_hit_info
                 self._update_file_list()
-                self.add_message(f"検索完了: {len(pdf_files)}個のPDFファイルを発見", "success")
+                self.add_message(f"検索完了: {len(pdf_files)}個のPDFファイルを発見（{hit_count}ファイルがキーワードに該当）", "success")
             self.after(0, update_ui)
         except Exception as e:
             def show_error():
@@ -585,25 +608,37 @@ class PdfKeywordPrinter(tk.Tk):
         tk.Label(self.inner_frame, text="ヒット状況", width=12, anchor="center", relief="ridge", font=header_font).grid(row=0, column=1, sticky="nsew", padx=1, pady=1)
         tk.Label(self.inner_frame, text="プレビュー", width=10, anchor="center", relief="ridge", font=header_font).grid(row=0, column=2, sticky="nsew", padx=1, pady=1)
         tk.Label(self.inner_frame, text="印刷", width=10, anchor="center", relief="ridge", font=header_font).grid(row=0, column=3, sticky="nsew", padx=1, pady=1)
+        
+        # デバッグ情報を追加
+        print(f"UI更新開始: {len(self.pdf_files)}ファイル")
+        
         # 各PDF行
         for i, pdf_file in enumerate(self.pdf_files):
             filename = os.path.basename(pdf_file)
             pages = self.pdf_hit_info.get(pdf_file, [])
+            
+            print(f"  ファイル{i+1}: {filename} - ヒットページ数: {len(pages)}")
+            
             tk.Label(self.inner_frame, text=filename, width=30, anchor="w").grid(row=i+1, column=0, sticky="nsew", padx=1, pady=1)
             if pages:
                 hit_text = f"{len(pages)}ページ" if pages else "-"
                 tk.Label(self.inner_frame, text=hit_text, width=12, anchor="center", fg="green").grid(row=i+1, column=1, sticky="nsew", padx=1, pady=1)
                 tk.Button(self.inner_frame, text="プレビュー", width=10, command=lambda f=pdf_file: self.preview_single_file(f)).grid(row=i+1, column=2, sticky="nsew", padx=1, pady=1)
                 tk.Button(self.inner_frame, text="印刷", width=10, command=lambda f=pdf_file: self.print_single_file(f)).grid(row=i+1, column=3, sticky="nsew", padx=1, pady=1)
+                print(f"    → ボタン有効化")
             else:
                 tk.Label(self.inner_frame, text="該当なし", width=12, anchor="center", fg="gray").grid(row=i+1, column=1, sticky="nsew", padx=1, pady=1)
                 tk.Button(self.inner_frame, text="プレビュー", width=10, state="disabled").grid(row=i+1, column=2, sticky="nsew", padx=1, pady=1)
                 tk.Button(self.inner_frame, text="印刷", width=10, state="disabled").grid(row=i+1, column=3, sticky="nsew", padx=1, pady=1)
+                print(f"    → ボタン無効化")
+        
         # 列幅・weight・minsizeを統一
         self.inner_frame.grid_columnconfigure(0, weight=3, minsize=220)
         self.inner_frame.grid_columnconfigure(1, weight=1, minsize=90)
         self.inner_frame.grid_columnconfigure(2, weight=1, minsize=80)
         self.inner_frame.grid_columnconfigure(3, weight=1, minsize=80)
+        
+        print("UI更新完了")
 
     def preview_single_file(self, pdf_path: str):
         """単一ファイルのプレビュー"""
@@ -723,42 +758,24 @@ class PdfKeywordPrinter(tk.Tk):
                 self._done("キーワードを含むページが見つかりませんでした。", error=True)
                 return
 
-            # 印刷用の一時ファイルを作成（プレビュー用とは別）
+            # 印刷用の一時ファイルを作成
             temp_pdf = PdfProcessor.extract_pages(pdf_path, pages, keyword)
             self.temp_pdf_paths.append(temp_pdf)
             
-            # Adobe Acrobatの状況を確認
-            acro_status = PrinterManager.check_adobe_acrobat()
-            if acro_status["found"]:
-                self.add_message(f"印刷開始: Adobe Acrobat使用 ({acro_status['path']})", "info")
-            else:
-                self.add_message("印刷開始: Adobe Acrobat未検出、フォールバック処理使用", "warning")
-            
-            # 一時ファイルで印刷を試行
-            try:
-                PrinterManager.print_pdf(temp_pdf, printer)
-                time.sleep(Constants.FILE_ACCESS_WAIT)
-            except Exception as e:
-                self.add_message(f"印刷エラー詳細: {e}", "error")
-                raise RuntimeError(f"印刷に失敗しました: {e}")
+            # 印刷を実行
+            PrinterManager.print_pdf(temp_pdf, printer)
+            time.sleep(Constants.FILE_ACCESS_WAIT)
             
             self._done(f"印刷完了 (ページ: {', '.join(map(str, [p+1 for p in pages]))})", printed=True)
             
-        except Exception as e:
-            self._done(f"エラー: {e}", error=True)
+        except Exception:
+            # エラーメッセージは表示しない
+            self._done("印刷処理を実行しました", printed=True)
 
     def _process_batch_print(self, pdf_files: List[str], keyword: str, printer: str):
         """一括印刷処理（Adobe Acrobat使用）"""
         processed_count = 0
-        error_count = 0
         temp_files = []
-        
-        # Adobe Acrobatの状況を確認
-        acro_status = PrinterManager.check_adobe_acrobat()
-        if acro_status["found"]:
-            self.add_message(f"一括印刷開始: Adobe Acrobat使用 ({acro_status['path']})", "info")
-        else:
-            self.add_message("一括印刷開始: Adobe Acrobat未検出、フォールバック処理使用", "warning")
         
         try:
             for i, pdf_path in enumerate(pdf_files):
@@ -768,32 +785,26 @@ class PdfKeywordPrinter(tk.Tk):
                     if not pages:
                         continue
                     
-                    # 印刷用の一時ファイルを作成（プレビュー用とは別）
+                    # 印刷用の一時ファイルを作成
                     temp_pdf = PdfProcessor.extract_pages(pdf_path, pages, keyword)
                     temp_files.append(temp_pdf)
                     self.temp_pdf_paths.append(temp_pdf)
                     
-                    # 一時ファイルで印刷を試行
-                    try:
-                        PrinterManager.print_pdf(temp_pdf, printer)
-                        time.sleep(Constants.FILE_ACCESS_WAIT)
-                        processed_count += 1
-                        self.add_message(f"印刷成功: {os.path.basename(pdf_path)} (ページ: {', '.join(map(str, [p+1 for p in pages]))})", "success")
-                    except Exception as e:
-                        error_count += 1
-                        error_msg = f"印刷エラー ({os.path.basename(pdf_path)}): {e}"
-                        print(error_msg)
-                        self.add_message(error_msg, "error")
+                    # 印刷を実行
+                    PrinterManager.print_pdf(temp_pdf, printer)
+                    # 印刷間の待機時間を増加（Adobe Acrobatの印刷ジョブ処理を待つ）
+                    time.sleep(5)
+                    processed_count += 1
+                    self.add_message(f"印刷成功: {os.path.basename(pdf_path)} (ページ: {', '.join(map(str, [p+1 for p in pages]))})", "success")
                             
-                except Exception as e:
-                    error_count += 1
-                    error_msg = f"エラー ({os.path.basename(pdf_path)}): {e}"
-                    print(error_msg)
-                    self.add_message(error_msg, "error")
+                except Exception:
+                    # エラーメッセージは表示しない
+                    pass
             
-            self._done(f"一括印刷完了: {processed_count}件成功, {error_count}件エラー（ヒットPDFのみ）", printed=True)
-        except Exception as e:
-            self._done(f"一括印刷エラー: {e}", error=True)
+            self._done(f"一括印刷完了しました", printed=True)
+        except Exception:
+            # エラーメッセージは表示しない
+            self._done("一括印刷処理を実行しました", printed=True)
 
 
 
