@@ -154,28 +154,48 @@ class PrinterManager:
     
     @staticmethod
     def print_pdf(pdf_path: str, printer: str) -> None:
-        """PDFを印刷（UltraThink対応、リトライ機能付き）"""
-        # ファイルの存在確認と安定化待機
+        """PDFを印刷（Acrobat優先）"""
         if not os.path.exists(pdf_path):
             raise RuntimeError(f"PDFファイルが見つかりません: {pdf_path}")
+
+        # Acrobat パスを優先順位で設定
+        acro_paths = [
+            r"C:\Program Files\Adobe\Acrobat DC\Acrobat\Acrobat.exe",
+            r"C:\Program Files (x86)\Adobe\Acrobat Reader DC\Reader\AcroRd32.exe",
+            r"C:\Program Files (x86)\Adobe\Reader\AcroRd32.exe",
+        ]
         
-        time.sleep(Constants.FILE_STABILITY_WAIT)
-        
-        # システムの既定のPDFアプリケーションで印刷
+        # Acrobat で印刷を試行
+        for exe in acro_paths:
+            if os.path.exists(exe):
+                try:
+                    subprocess.run(
+                        [exe, "/t", pdf_path, printer],
+                        check=True,
+                        stdout=subprocess.DEVNULL,
+                        stderr=subprocess.DEVNULL,
+                    )
+                    time.sleep(Constants.FILE_ACCESS_WAIT)
+                    return
+                except Exception as e:
+                    continue   # 次の候補へ
+
+        # Acrobat が見つからない場合のフォールバック
         try:
-            # ファイルを直接印刷（システムの既定のアプリケーションを使用）
+            # 既定アプリで print verb を試行
             os.startfile(pdf_path, "print")
             time.sleep(Constants.FILE_ACCESS_WAIT)
+            return
         except Exception as e:
-            raise RuntimeError(
-                f"印刷に失敗しました。\n\n"
-                f"プリンタでの印刷に問題がある可能性があります。\n"
-                f"以下の対処法をお試しください：\n"
-                f"• プリンタの電源を再起動\n"
-                f"• プリンタドライバーを更新\n"
-                f"• PDFファイルの関連付けを確認\n\n"
-                f"エラー詳細: {e}"
-            )
+            # 最後の手段として既定アプリを開く
+            try:
+                os.startfile(pdf_path)  # open verb
+                raise RuntimeError(
+                    "Adobe Acrobat が見つからないため、自動印刷できませんでした。\n"
+                    "Adobe Acrobat または Acrobat Reader をインストールしてください。"
+                )
+            except Exception as e2:
+                raise RuntimeError(f"印刷に失敗しました: {e2}")
 
 
 class PreviewManager:
