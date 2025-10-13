@@ -713,7 +713,7 @@ class PdfKeywordPrinter(tk.Tk):
         # キーワードとプリンタ行
         controls_frame = tk.Frame(settings_frame)
         controls_frame.pack(fill="x", pady=Constants.PADDING)
-        tk.Label(controls_frame, text="検索キーワード(大文字小文字区別なし/カンマ区切り複数指定可):").pack(side="left")
+        tk.Label(controls_frame, text="検索キーワード(カンマ区切りで複数指定可):").pack(side="left")
         tk.Entry(controls_frame, textvariable=self.keyword_var, width=Constants.KEYWORD_ENTRY_WIDTH).pack(side="left", padx=(0, Constants.PADDING))
         tk.Label(controls_frame, text="プリンタ:").pack(side="left")
         self.printer_menu = tk.OptionMenu(controls_frame, self.printer_var, "")
