@@ -86,7 +86,7 @@ class PdfProcessor:
     
     @staticmethod
     def find_keyword_pages(pdf_path: str, keyword: str) -> List[int]:
-        """キーワードを含むページを検索（テキストレイヤー対応）"""
+        """キーワード（カンマ区切り可）を含むページを検索（テキストレイヤー対応、OR一致）"""
         hit_pages = []
         try:
             # PDFファイルの基本チェック
@@ -103,6 +103,11 @@ class PdfProcessor:
                 if not header.startswith(b'%PDF'):
                     raise ValueError(f"PDFファイルの形式が不正です: {pdf_path}")
             
+            # 検索キーワード（カンマ区切り）を前処理
+            raw_keyword = keyword or ""
+            keywords_list = [k.strip() for k in raw_keyword.split(",") if k.strip()]
+            keywords_lower = [k.lower() for k in keywords_list]
+
             # pdfplumberでテキスト検索を試行
             try:
                 with pdfplumber.open(pdf_path) as pdf:
@@ -110,7 +115,8 @@ class PdfProcessor:
                     for i, page in enumerate(pdf.pages):
                         try:
                             text = page.extract_text() or ""
-                            if keyword.lower() in text.lower():
+                            text_lower = text.lower()
+                            if any(kw in text_lower for kw in keywords_lower):
                                 hit_pages.append(i)
                                 print(f"    ページ{i+1}でキーワード発見")
                         except Exception as e:
@@ -126,7 +132,8 @@ class PdfProcessor:
                     for i, page in enumerate(reader.pages):
                         try:
                             text = page.extract_text() or ""
-                            if keyword.lower() in text.lower():
+                            text_lower = text.lower()
+                            if any(kw in text_lower for kw in keywords_lower):
                                 hit_pages.append(i)
                                 print(f"    ページ{i+1}でキーワード発見（pypdf）")
                         except Exception as e:
@@ -706,7 +713,7 @@ class PdfKeywordPrinter(tk.Tk):
         # キーワードとプリンタ行
         controls_frame = tk.Frame(settings_frame)
         controls_frame.pack(fill="x", pady=Constants.PADDING)
-        tk.Label(controls_frame, text="検索キーワード:").pack(side="left")
+        tk.Label(controls_frame, text="検索キーワード(大文字小文字区別なし/カンマ区切り複数指定可):").pack(side="left")
         tk.Entry(controls_frame, textvariable=self.keyword_var, width=Constants.KEYWORD_ENTRY_WIDTH).pack(side="left", padx=(0, Constants.PADDING))
         tk.Label(controls_frame, text="プリンタ:").pack(side="left")
         self.printer_menu = tk.OptionMenu(controls_frame, self.printer_var, "")
@@ -1002,8 +1009,10 @@ class PdfKeywordPrinter(tk.Tk):
             self.add_message("エラー: ディレクトリを選択してください。", "error")
             return False
         
-        if not keyword:
-            self.add_message("エラー: 検索キーワードを入力してください。", "error")
+        # 複数キーワード（カンマ区切り）前処理し、有効な語が1つもない場合はエラー
+        keywords_list = [k.strip() for k in (keyword or "").split(",") if k.strip()]
+        if not keywords_list:
+            self.add_message("エラー: 検索キーワードを入力してください。（カンマのみは不可）", "error")
             return False
 
         # 依存パッケージチェック
