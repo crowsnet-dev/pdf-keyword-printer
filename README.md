@@ -100,7 +100,7 @@ pip install pyinstaller
 ### 2. EXE ファイルの作成
 
 ```powershell
-pyinstaller "PDFキーワード印刷ツール.spec"
+python -m PyInstaller pdf_keyword_printer.spec
 ```
 
 ### 3. 配布ファイル
