@@ -619,7 +619,7 @@ class PdfKeywordPrinter(tk.Tk):
 
         # State vars
         self.directory_var = tk.StringVar()
-        self.keyword_var = tk.StringVar(value="(000001),(000006)")
+        self.keyword_var = tk.StringVar(value="(000101),(000106)")
         self.printer_var = tk.StringVar()
         self.temp_pdf_paths = []  # 一時PDFのパスリスト（削除管理用）
         self.pdf_files = []  # 検索されたPDFファイルのリスト
