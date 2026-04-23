@@ -48,8 +48,8 @@ except ImportError:
 
 class Constants:
     """定数クラス"""
-    WINDOW_WIDTH = 800
-    WINDOW_HEIGHT = 700
+    WINDOW_WIDTH = 820
+    WINDOW_HEIGHT = 780
     PADDING = 6
     BUTTON_WIDTH = 12
     ENTRY_WIDTH = 48
@@ -618,6 +618,8 @@ class PdfKeywordPrinter(tk.Tk):
         super().__init__()
         self.title("PDF キーワード印刷ツール")
         self.geometry(f"{Constants.WINDOW_WIDTH}x{Constants.WINDOW_HEIGHT}")
+        self.minsize(760, 680)
+        self.option_add("*Font", "Meiryo 9")
         self.resizable(True, True)
 
         # State vars
@@ -625,6 +627,7 @@ class PdfKeywordPrinter(tk.Tk):
         self.keyword_var = tk.StringVar(value="(000101),(000106)")
         self.additional_filter_var = tk.StringVar(value="")
         self.printer_var = tk.StringVar()
+        self.summary_var = tk.StringVar(value="未検索")
         self.temp_pdf_paths = []  # 一時PDFのパスリスト（削除管理用）
         self.pdf_files = []  # 検索されたPDFファイルのリスト
         self.pdf_hit_info = {}  # {pdf_path: [ヒットページリスト]}
@@ -701,73 +704,124 @@ class PdfKeywordPrinter(tk.Tk):
         main_frame = tk.Frame(self)
         main_frame.pack(fill="both", expand=True, padx=Constants.PADDING, pady=Constants.PADDING)
 
-        # 上部設定エリア
-        settings_frame = tk.LabelFrame(main_frame, text="設定", padx=Constants.PADDING, pady=Constants.PADDING)
+        # 上部設定エリア（外枠なしで3グループを並べる）
+        settings_frame = tk.Frame(main_frame)
         settings_frame.pack(fill="x", pady=(0, Constants.PADDING))
 
-        # ディレクトリ選択行
-        dir_frame = tk.Frame(settings_frame)
-        dir_frame.pack(fill="x", pady=Constants.PADDING)
-        tk.Label(dir_frame, text="対象ディレクトリ:").grid(row=0, column=0, sticky="w")
-        tk.Entry(dir_frame, textvariable=self.directory_var, width=Constants.ENTRY_WIDTH, 
-                state="readonly").grid(row=0, column=1, padx=(0, Constants.PADDING), sticky="ew")
-        tk.Button(dir_frame, text="参照...", command=self.browse_directory, width=10).grid(row=0, column=2, sticky="e")
-        dir_frame.grid_columnconfigure(1, weight=1)
+        hint_font = ("Meiryo", 8)
+        label_font = ("Meiryo", 9)
+        group_pady = (0, Constants.PADDING)
+        inner_pady = 2
 
-        # キーワードとプリンタ行
-        controls_frame = tk.Frame(settings_frame)
-        controls_frame.pack(fill="x", pady=Constants.PADDING)
-        tk.Label(controls_frame, text="検索キーワード(カンマ区切りで複数指定可):").pack(side="left")
-        tk.Entry(controls_frame, textvariable=self.keyword_var, width=Constants.KEYWORD_ENTRY_WIDTH).pack(side="left", padx=(0, Constants.PADDING))
-        tk.Label(controls_frame, text="プリンタ:").pack(side="left")
-        self.printer_menu = tk.OptionMenu(controls_frame, self.printer_var, "")
-        self.printer_menu.config(width=Constants.PRINTER_MENU_WIDTH)
-        self.printer_menu.pack(side="left")
+        # --- 対象フォルダグループ ---
+        folder_group = tk.LabelFrame(settings_frame, text="対象フォルダ",
+                                     padx=Constants.PADDING, pady=Constants.PADDING,
+                                     font=label_font)
+        folder_group.pack(fill="x", pady=group_pady)
+        tk.Label(folder_group, text="対象ディレクトリ:", font=label_font).grid(
+            row=0, column=0, sticky="w", padx=(0, Constants.PADDING), pady=inner_pady)
+        tk.Entry(folder_group, textvariable=self.directory_var, state="readonly").grid(
+            row=0, column=1, sticky="ew", padx=(0, Constants.PADDING), pady=inner_pady)
+        tk.Button(folder_group, text="参照...", command=self.browse_directory, width=10).grid(
+            row=0, column=2, sticky="e", pady=inner_pady)
+        folder_group.grid_columnconfigure(1, weight=1)
 
-        # 追加絞り込みキーワード行
-        additional_frame = tk.Frame(settings_frame)
-        additional_frame.pack(fill="x", pady=Constants.PADDING)
-        tk.Label(additional_frame, text="追加絞り込みキーワード(任意・単一):").pack(side="left")
-        tk.Entry(additional_frame, textvariable=self.additional_filter_var, width=Constants.KEYWORD_ENTRY_WIDTH).pack(side="left", padx=(0, Constants.PADDING))
+        # --- 検索条件グループ ---
+        search_group = tk.LabelFrame(settings_frame, text="検索条件",
+                                     padx=Constants.PADDING, pady=Constants.PADDING,
+                                     font=label_font)
+        search_group.pack(fill="x", pady=group_pady)
 
-        # 検索ボタン
-        search_frame = tk.Frame(settings_frame)
-        search_frame.pack(fill="x", pady=Constants.PADDING)
-        tk.Button(search_frame, text="PDFファイル検索", command=self.search_pdf_files, 
-                 width=Constants.BUTTON_WIDTH).pack(side="left")
-        
-        # ローディング表示ラベル
-        self.loading_label = tk.Label(search_frame, text="", fg="blue", font=("Meiryo", 9))
+        tk.Label(search_group, text="検索キーワード:", font=label_font).grid(
+            row=0, column=0, sticky="w", padx=(0, Constants.PADDING), pady=(inner_pady, 0))
+        tk.Entry(search_group, textvariable=self.keyword_var).grid(
+            row=0, column=1, sticky="ew", padx=(0, Constants.PADDING), pady=(inner_pady, 0))
+        tk.Label(search_group, text="カンマ区切りで複数指定可（OR一致）",
+                 fg="gray", font=hint_font).grid(
+            row=1, column=1, sticky="w", padx=(0, Constants.PADDING), pady=(0, inner_pady))
+
+        tk.Label(search_group, text="追加絞り込みキーワード:", font=label_font).grid(
+            row=2, column=0, sticky="w", padx=(0, Constants.PADDING), pady=(inner_pady, 0))
+        tk.Entry(search_group, textvariable=self.additional_filter_var).grid(
+            row=2, column=1, sticky="ew", padx=(0, Constants.PADDING), pady=(inner_pady, 0))
+        tk.Label(search_group, text="任意・単一語。上の結果をさらにAND絞り込み",
+                 fg="gray", font=hint_font).grid(
+            row=3, column=1, sticky="w", padx=(0, Constants.PADDING), pady=(0, inner_pady))
+
+        search_button_row = tk.Frame(search_group)
+        search_button_row.grid(row=4, column=0, columnspan=2, sticky="ew",
+                               pady=(Constants.PADDING, inner_pady))
+        tk.Button(search_button_row, text="検索",
+                  command=self.search_pdf_files, width=Constants.BUTTON_WIDTH).pack(side="left")
+        self.loading_label = tk.Label(search_button_row, text="", fg="blue", font=label_font)
         self.loading_label.pack(side="left", padx=(Constants.PADDING, 0))
 
-        # メッセージエリア（設定とPDF一覧の間）
-        message_frame = tk.LabelFrame(main_frame, text="メッセージ", padx=Constants.PADDING, pady=Constants.PADDING)
-        message_frame.pack(fill="x", pady=(0, Constants.PADDING))
-        
-        # メッセージテキストエリア（スクロール付き）
+        search_group.grid_columnconfigure(1, weight=1)
+
+        # --- 印刷設定グループ ---
+        printer_group = tk.LabelFrame(settings_frame, text="印刷設定",
+                                      padx=Constants.PADDING, pady=Constants.PADDING,
+                                      font=label_font)
+        printer_group.pack(fill="x")
+        tk.Label(printer_group, text="プリンタ:", font=label_font).grid(
+            row=0, column=0, sticky="w", padx=(0, Constants.PADDING), pady=inner_pady)
+        self.printer_menu = tk.OptionMenu(printer_group, self.printer_var, "")
+        self.printer_menu.config(width=Constants.PRINTER_MENU_WIDTH)
+        self.printer_menu.grid(row=0, column=1, sticky="w", pady=inner_pady)
+        printer_group.grid_columnconfigure(1, weight=1)
+
+        # --- 下部アクションバー（最優先で底に固定）---
+        action_bar = tk.Frame(main_frame)
+        action_bar.pack(side="bottom", fill="x", pady=(Constants.PADDING, 0))
+        tk.Label(action_bar, text="※ 一括印刷はヒットしたPDFのみが対象です",
+                 font=("Meiryo", 8), fg="gray").pack(side="left")
+        tk.Button(action_bar, text="一括印刷", command=self.batch_print,
+                  width=Constants.BUTTON_WIDTH,
+                  font=("Meiryo", 10, "bold")).pack(side="right", padx=(0, Constants.PADDING))
+
+        # --- メッセージエリア（アクションバーの上に固定）---
+        message_frame = tk.LabelFrame(main_frame, text="メッセージ",
+                                      padx=Constants.PADDING, pady=Constants.PADDING,
+                                      font=("Meiryo", 9))
+        message_frame.pack(side="bottom", fill="x", pady=(0, Constants.PADDING))
+
         message_text_frame = tk.Frame(message_frame)
         message_text_frame.pack(fill="both", expand=True)
-        
-        self.message_text = tk.Text(message_text_frame, height=6, wrap="word", state="disabled")
-        message_scrollbar = tk.Scrollbar(message_text_frame, orient="vertical", command=self.message_text.yview)
+
+        self.message_text = tk.Text(message_text_frame, height=3, wrap="word",
+                                    state="disabled", font=("Meiryo", 9),
+                                    bg="#f7f7f7", relief="flat", borderwidth=1)
+        message_scrollbar = tk.Scrollbar(message_text_frame, orient="vertical",
+                                         command=self.message_text.yview)
         self.message_text.configure(yscrollcommand=message_scrollbar.set)
-        
+
         self.message_text.pack(side="left", fill="both", expand=True)
         message_scrollbar.pack(side="right", fill="y")
-        
-        # メッセージクリアボタン
+
         clear_button_frame = tk.Frame(message_frame)
         clear_button_frame.pack(fill="x", pady=(Constants.PADDING, 0))
-        tk.Button(clear_button_frame, text="メッセージクリア", command=self.clear_messages, 
-                 width=15).pack(side="right")
+        tk.Button(clear_button_frame, text="メッセージクリア",
+                  command=self.clear_messages, width=15).pack(side="right")
 
+        # --- PDFファイル一覧（残りの空間に展開）---
+        list_frame = tk.LabelFrame(main_frame, text="PDFファイル一覧",
+                                    padx=Constants.PADDING, pady=Constants.PADDING,
+                                    font=("Meiryo", 9))
+        list_frame.pack(side="top", fill="both", expand=True, pady=(0, Constants.PADDING))
 
+        # サマリ行（検索結果の件数表示）
+        summary_bar = tk.Frame(list_frame)
+        summary_bar.pack(fill="x", pady=(0, Constants.PADDING))
+        tk.Label(summary_bar, text="検索状況:",
+                 font=("Meiryo", 9), fg="gray").pack(side="left")
+        tk.Label(summary_bar, textvariable=self.summary_var,
+                 font=("Meiryo", 9, "bold"), fg="#004488").pack(side="left", padx=(4, 0))
 
-        # PDFファイル一覧エリア（Canvas+Frame+Scrollbar）
-        list_frame = tk.LabelFrame(main_frame, text="PDFファイル一覧", padx=Constants.PADDING, pady=Constants.PADDING)
-        list_frame.pack(fill="both", expand=True, pady=(0, Constants.PADDING))
-        self.canvas = tk.Canvas(list_frame)
-        self.scrollbar = tk.Scrollbar(list_frame, orient="vertical", command=self.canvas.yview)
+        # 一覧本体（Canvas）
+        list_body = tk.Frame(list_frame)
+        list_body.pack(fill="both", expand=True)
+        self.canvas = tk.Canvas(list_body, highlightthickness=0)
+        self.scrollbar = tk.Scrollbar(list_body, orient="vertical", command=self.canvas.yview)
         self.inner_frame = tk.Frame(self.canvas)
         self.inner_frame.bind(
             "<Configure>", lambda e: self.canvas.configure(scrollregion=self.canvas.bbox("all")))
@@ -776,19 +830,11 @@ class PdfKeywordPrinter(tk.Tk):
         self.canvas.pack(side="left", fill="both", expand=True)
         self.scrollbar.pack(side="right", fill="y")
 
-        # ヘッダー
-        self.header_row = tk.Frame(self.inner_frame)
-        self.header_row.pack(fill="x")
-        tk.Label(self.header_row, text="ファイル名", width=30, anchor="w", relief="ridge").grid(row=0, column=0, sticky="nsew", padx=1, pady=1)
-        tk.Label(self.header_row, text="ヒット状況", width=12, anchor="center", relief="ridge").grid(row=0, column=1, sticky="nsew", padx=1, pady=1)
-        tk.Label(self.header_row, text="プレビュー", width=10, anchor="center", relief="ridge").grid(row=0, column=2, sticky="nsew", padx=1, pady=1)
-        tk.Label(self.header_row, text="印刷", width=10, anchor="center", relief="ridge").grid(row=0, column=3, sticky="nsew", padx=1, pady=1)
-
-        # 下部ボタンエリア
-        button_frame = tk.Frame(main_frame)
-        button_frame.pack(fill="x", pady=Constants.PADDING)
-        tk.Button(button_frame, text="一括印刷", command=self.batch_print, 
-                 width=Constants.BUTTON_WIDTH).pack(side="right", padx=Constants.PADDING)
+        # マウスホイールスクロール対応（カーソルが一覧上にあるときのみ）
+        def _on_mousewheel(event):
+            self.canvas.yview_scroll(int(-1 * (event.delta / 120)), "units")
+        self.canvas.bind("<Enter>", lambda e: self.canvas.bind_all("<MouseWheel>", _on_mousewheel))
+        self.canvas.bind("<Leave>", lambda e: self.canvas.unbind_all("<MouseWheel>"))
 
     def _setup_printers(self):
         """プリンタ設定"""
@@ -919,42 +965,76 @@ class PdfKeywordPrinter(tk.Tk):
         # 既存のPDF行・ヘッダーを全て削除
         for widget in self.inner_frame.winfo_children():
             widget.destroy()
-        # ヘッダー
-        header_font = ("Meiryo", 10, "bold")
-        tk.Label(self.inner_frame, text="ファイル名", width=30, anchor="w", relief="ridge", font=header_font).grid(row=0, column=0, sticky="nsew", padx=1, pady=1)
-        tk.Label(self.inner_frame, text="ヒット状況", width=12, anchor="center", relief="ridge", font=header_font).grid(row=0, column=1, sticky="nsew", padx=1, pady=1)
-        tk.Label(self.inner_frame, text="プレビュー", width=10, anchor="center", relief="ridge", font=header_font).grid(row=0, column=2, sticky="nsew", padx=1, pady=1)
-        tk.Label(self.inner_frame, text="印刷", width=10, anchor="center", relief="ridge", font=header_font).grid(row=0, column=3, sticky="nsew", padx=1, pady=1)
-        
-        # デバッグ情報を追加
+
+        header_font = ("Meiryo", 9, "bold")
+        body_font = ("Meiryo", 9)
+        header_bg = "#e8edf2"
+        row_bg_even = "#ffffff"
+        row_bg_odd = "#fafbfd"
+
+        # ヘッダー行
+        tk.Label(self.inner_frame, text="ファイル名", anchor="w",
+                 font=header_font, bg=header_bg, padx=6, pady=4).grid(
+            row=0, column=0, sticky="nsew", padx=1, pady=1)
+        tk.Label(self.inner_frame, text="ヒット状況", anchor="center",
+                 font=header_font, bg=header_bg, padx=6, pady=4).grid(
+            row=0, column=1, sticky="nsew", padx=1, pady=1)
+        tk.Label(self.inner_frame, text="プレビュー", anchor="center",
+                 font=header_font, bg=header_bg, padx=6, pady=4).grid(
+            row=0, column=2, sticky="nsew", padx=1, pady=1)
+        tk.Label(self.inner_frame, text="印刷", anchor="center",
+                 font=header_font, bg=header_bg, padx=6, pady=4).grid(
+            row=0, column=3, sticky="nsew", padx=1, pady=1)
+
         print(f"UI更新開始: {len(self.pdf_files)}ファイル")
-        
-        # 各PDF行
+
+        hit_count = 0
         for i, pdf_file in enumerate(self.pdf_files):
             filename = os.path.basename(pdf_file)
             pages = self.pdf_hit_info.get(pdf_file, [])
-            
+            row_bg = row_bg_even if i % 2 == 0 else row_bg_odd
+
             print(f"  ファイル{i+1}: {filename} - ヒットページ数: {len(pages)}")
-            
-            tk.Label(self.inner_frame, text=filename, width=30, anchor="w").grid(row=i+1, column=0, sticky="nsew", padx=1, pady=1)
+
+            tk.Label(self.inner_frame, text=filename, anchor="w",
+                     font=body_font, bg=row_bg, padx=6, pady=3).grid(
+                row=i+1, column=0, sticky="nsew", padx=1, pady=1)
             if pages:
-                hit_text = f"{len(pages)}ページ" if pages else "-"
-                tk.Label(self.inner_frame, text=hit_text, width=12, anchor="center", fg="green").grid(row=i+1, column=1, sticky="nsew", padx=1, pady=1)
-                tk.Button(self.inner_frame, text="プレビュー", width=10, command=lambda f=pdf_file: self.preview_single_file(f)).grid(row=i+1, column=2, sticky="nsew", padx=1, pady=1)
-                tk.Button(self.inner_frame, text="印刷", width=10, command=lambda f=pdf_file: self.print_single_file(f)).grid(row=i+1, column=3, sticky="nsew", padx=1, pady=1)
-                print(f"    → ボタン有効化")
+                hit_count += 1
+                tk.Label(self.inner_frame, text=f"{len(pages)}ページ",
+                         anchor="center", fg="#0a7a3d", font=body_font,
+                         bg=row_bg, padx=6, pady=3).grid(
+                    row=i+1, column=1, sticky="nsew", padx=1, pady=1)
+                tk.Button(self.inner_frame, text="プレビュー", font=body_font,
+                          command=lambda f=pdf_file: self.preview_single_file(f)).grid(
+                    row=i+1, column=2, sticky="nsew", padx=1, pady=1)
+                tk.Button(self.inner_frame, text="印刷", font=body_font,
+                          command=lambda f=pdf_file: self.print_single_file(f)).grid(
+                    row=i+1, column=3, sticky="nsew", padx=1, pady=1)
             else:
-                tk.Label(self.inner_frame, text="該当なし", width=12, anchor="center", fg="gray").grid(row=i+1, column=1, sticky="nsew", padx=1, pady=1)
-                tk.Button(self.inner_frame, text="プレビュー", width=10, state="disabled").grid(row=i+1, column=2, sticky="nsew", padx=1, pady=1)
-                tk.Button(self.inner_frame, text="印刷", width=10, state="disabled").grid(row=i+1, column=3, sticky="nsew", padx=1, pady=1)
-                print(f"    → ボタン無効化")
-        
-        # 列幅・weight・minsizeを統一
-        self.inner_frame.grid_columnconfigure(0, weight=3, minsize=220)
-        self.inner_frame.grid_columnconfigure(1, weight=1, minsize=90)
-        self.inner_frame.grid_columnconfigure(2, weight=1, minsize=80)
-        self.inner_frame.grid_columnconfigure(3, weight=1, minsize=80)
-        
+                tk.Label(self.inner_frame, text="該当なし", anchor="center",
+                         fg="gray", font=body_font, bg=row_bg, padx=6, pady=3).grid(
+                    row=i+1, column=1, sticky="nsew", padx=1, pady=1)
+                tk.Button(self.inner_frame, text="プレビュー", font=body_font,
+                          state="disabled").grid(
+                    row=i+1, column=2, sticky="nsew", padx=1, pady=1)
+                tk.Button(self.inner_frame, text="印刷", font=body_font,
+                          state="disabled").grid(
+                    row=i+1, column=3, sticky="nsew", padx=1, pady=1)
+
+        # 列幅の統一（ファイル名列は広め、他列は均等）
+        self.inner_frame.grid_columnconfigure(0, weight=4, minsize=240)
+        self.inner_frame.grid_columnconfigure(1, weight=1, minsize=100)
+        self.inner_frame.grid_columnconfigure(2, weight=1, minsize=100)
+        self.inner_frame.grid_columnconfigure(3, weight=1, minsize=100)
+
+        # サマリ表示を更新
+        total = len(self.pdf_files)
+        if total == 0:
+            self.summary_var.set("未検索")
+        else:
+            self.summary_var.set(f"合計 {total} 件　/　ヒット {hit_count} 件")
+
         print("UI更新完了")
 
     def preview_single_file(self, pdf_path: str):
