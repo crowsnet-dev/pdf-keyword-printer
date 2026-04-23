@@ -624,7 +624,7 @@ class PdfKeywordPrinter(tk.Tk):
 
         # State vars
         self.directory_var = tk.StringVar()
-        self.keyword_var = tk.StringVar(value="(000101),(000106)")
+        self.keyword_var = tk.StringVar(value="(000101),(000106),外注ケーブル")
         self.additional_filter_var = tk.StringVar(value="")
         self.printer_var = tk.StringVar()
         self.summary_var = tk.StringVar(value="未検索")

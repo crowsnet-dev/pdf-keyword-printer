@@ -35,7 +35,7 @@ python -m PyInstaller pdf_keyword_printer.spec
 
 ## 押さえるべき振る舞い
 
-- **キーワード検索**: `keyword_var` はカンマ区切り文字列。`find_keyword_pages` は OR 一致・大文字小文字無視。既定値 `(000101),(000106)` は特定帳票のコードを想定した初期値で、UI 上で上書き可能。
+- **キーワード検索**: `keyword_var` はカンマ区切り文字列。`find_keyword_pages` は OR 一致・大文字小文字無視。既定値 `(000101),(000106),外注ケーブル` は特定帳票のコードを想定した初期値で、UI 上で上書き可能。
 - **印刷の成否確認**: Adobe 起動直後に固定 3 秒待機 → `check_print_job_sent`（キュー投入を最大 10 秒ポーリング）→ `wait_for_print_job_completion`（最大 60 秒ポーリング）の順で信頼性を担保。タイムアウトしてもエラーにはせず、プロセス終了のみ実施。
 - **一時ファイル管理**: 生成した抽出 PDF は `self.temp_pdf_paths` に積み、`atexit` / `signal` (`SIGINT`/`SIGTERM`) / `WM_DELETE_WINDOW` / `finally` の 4 経路で `_cleanup_on_exit` を呼んで削除する。経路を追加・削除する際はこの冗長性を崩さないこと。
 - **Windows 依存**: `win32print` / `win32api` / `win32con` の import は `try/except ImportError` で囲んであり、失敗時は `PRINTER_SUPPORT = False` でプリンタ UI を無効化する。pywin32 前提を緩める際はこのフラグ経路を維持する。
