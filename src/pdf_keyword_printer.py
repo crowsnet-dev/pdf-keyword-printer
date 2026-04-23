@@ -85,8 +85,9 @@ class PdfProcessor:
     """PDF処理を担当するクラス"""
     
     @staticmethod
-    def find_keyword_pages(pdf_path: str, keyword: str) -> List[int]:
-        """キーワード（カンマ区切り可）を含むページを検索（テキストレイヤー対応、OR一致）"""
+    def find_keyword_pages(pdf_path: str, keyword: str, additional_filter: str = "") -> List[int]:
+        """キーワード（カンマ区切り可・OR一致）を含むページを検索。
+        additional_filter が非空のときは、OR一致したページのうち追加語も含むページのみ残す（AND）。"""
         hit_pages = []
         try:
             # PDFファイルの基本チェック
@@ -107,6 +108,8 @@ class PdfProcessor:
             raw_keyword = keyword or ""
             keywords_list = [k.strip() for k in raw_keyword.split(",") if k.strip()]
             keywords_lower = [k.lower() for k in keywords_list]
+            # 追加絞り込みキーワード（単一・カンマ分割しない）
+            additional_lower = (additional_filter or "").strip().lower()
 
             # pdfplumberでテキスト検索を試行
             try:
@@ -116,7 +119,7 @@ class PdfProcessor:
                         try:
                             text = page.extract_text() or ""
                             text_lower = text.lower()
-                            if any(kw in text_lower for kw in keywords_lower):
+                            if any(kw in text_lower for kw in keywords_lower) and (not additional_lower or additional_lower in text_lower):
                                 hit_pages.append(i)
                                 print(f"    ページ{i+1}でキーワード発見")
                         except Exception as e:
@@ -133,7 +136,7 @@ class PdfProcessor:
                         try:
                             text = page.extract_text() or ""
                             text_lower = text.lower()
-                            if any(kw in text_lower for kw in keywords_lower):
+                            if any(kw in text_lower for kw in keywords_lower) and (not additional_lower or additional_lower in text_lower):
                                 hit_pages.append(i)
                                 print(f"    ページ{i+1}でキーワード発見（pypdf）")
                         except Exception as e:
@@ -620,6 +623,7 @@ class PdfKeywordPrinter(tk.Tk):
         # State vars
         self.directory_var = tk.StringVar()
         self.keyword_var = tk.StringVar(value="(000101),(000106)")
+        self.additional_filter_var = tk.StringVar(value="")
         self.printer_var = tk.StringVar()
         self.temp_pdf_paths = []  # 一時PDFのパスリスト（削除管理用）
         self.pdf_files = []  # 検索されたPDFファイルのリスト
@@ -719,6 +723,12 @@ class PdfKeywordPrinter(tk.Tk):
         self.printer_menu = tk.OptionMenu(controls_frame, self.printer_var, "")
         self.printer_menu.config(width=Constants.PRINTER_MENU_WIDTH)
         self.printer_menu.pack(side="left")
+
+        # 追加絞り込みキーワード行
+        additional_frame = tk.Frame(settings_frame)
+        additional_frame.pack(fill="x", pady=Constants.PADDING)
+        tk.Label(additional_frame, text="追加絞り込みキーワード(任意・単一):").pack(side="left")
+        tk.Entry(additional_frame, textvariable=self.additional_filter_var, width=Constants.KEYWORD_ENTRY_WIDTH).pack(side="left", padx=(0, Constants.PADDING))
 
         # 検索ボタン
         search_frame = tk.Frame(settings_frame)
@@ -858,13 +868,14 @@ class PdfKeywordPrinter(tk.Tk):
             pdf_files = PdfProcessor.find_pdf_files(directory)
             pdf_hit_info = {}
             keyword = self.keyword_var.get().strip()
-            
+            additional_filter = self.additional_filter_var.get().strip()
+
             # デバッグ情報を追加
-            print(f"検索開始: {len(pdf_files)}個のPDFファイル、キーワード: '{keyword}'")
-            
+            print(f"検索開始: {len(pdf_files)}個のPDFファイル、キーワード: '{keyword}'、追加絞り込み: '{additional_filter}'")
+
             for pdf_file in pdf_files:
                 try:
-                    pages = PdfProcessor.find_keyword_pages(pdf_file, keyword)
+                    pages = PdfProcessor.find_keyword_pages(pdf_file, keyword, additional_filter)
                     # デバッグ情報を追加
                     if pages:
                         print(f"ヒット: {os.path.basename(pdf_file)} - {len(pages)}ページ")
@@ -952,13 +963,14 @@ class PdfKeywordPrinter(tk.Tk):
             return
 
         keyword = self.keyword_var.get().strip()
-        
+        additional_filter = self.additional_filter_var.get().strip()
+
         self._set_ui_state("disabled")
         self.start_loading("プレビュー処理中")
 
         threading.Thread(
             target=self._process_and_preview_single,
-            args=(pdf_path, keyword),
+            args=(pdf_path, keyword, additional_filter),
             daemon=True
         ).start()
 
@@ -968,14 +980,15 @@ class PdfKeywordPrinter(tk.Tk):
             return
 
         keyword = self.keyword_var.get().strip()
+        additional_filter = self.additional_filter_var.get().strip()
         printer = self.printer_var.get()
-        
+
         self._set_ui_state("disabled")
         self.start_loading("印刷処理中")
 
         threading.Thread(
             target=self._process_and_print_single,
-            args=(pdf_path, keyword, printer),
+            args=(pdf_path, keyword, printer, additional_filter),
             daemon=True
         ).start()
 
@@ -990,13 +1003,14 @@ class PdfKeywordPrinter(tk.Tk):
             return
 
         keyword = self.keyword_var.get().strip()
+        additional_filter = self.additional_filter_var.get().strip()
         printer = self.printer_var.get()
         self._set_ui_state("disabled")
         self.add_message(f"一括印刷処理中...（{len(hit_pdfs)}件）", "info")
         self.start_loading("一括印刷処理中")
         threading.Thread(
             target=self._process_batch_print,
-            args=(hit_pdfs, keyword, printer),
+            args=(hit_pdfs, keyword, printer, additional_filter),
             daemon=True
         ).start()
 
@@ -1040,11 +1054,11 @@ class PdfKeywordPrinter(tk.Tk):
             except tk.TclError:
                 pass  # not all widgets support state
 
-    def _process_and_preview_single(self, pdf_path: str, keyword: str):
+    def _process_and_preview_single(self, pdf_path: str, keyword: str, additional_filter: str = ""):
         """単一ファイルのプレビュー処理"""
         temp_pdf = None
         try:
-            pages = PdfProcessor.find_keyword_pages(pdf_path, keyword)
+            pages = PdfProcessor.find_keyword_pages(pdf_path, keyword, additional_filter)
             if not pages:
                 self._done("キーワードを含むページが見つかりませんでした。", error=True)
                 return
@@ -1060,11 +1074,11 @@ class PdfKeywordPrinter(tk.Tk):
             self._cleanup_temp_file(temp_pdf)
             self._done(f"エラー: {e}", error=True)
 
-    def _process_and_print_single(self, pdf_path: str, keyword: str, printer: str):
+    def _process_and_print_single(self, pdf_path: str, keyword: str, printer: str, additional_filter: str = ""):
         """単一ファイルの印刷処理（Adobe Acrobat使用）"""
         temp_pdf = None
         try:
-            pages = PdfProcessor.find_keyword_pages(pdf_path, keyword)
+            pages = PdfProcessor.find_keyword_pages(pdf_path, keyword, additional_filter)
             if not pages:
                 self._done("キーワードを含むページが見つかりませんでした。", error=True)
                 return
@@ -1084,16 +1098,16 @@ class PdfKeywordPrinter(tk.Tk):
             # エラーメッセージは表示しない
             self._done("印刷処理を実行しました", printed=True)
 
-    def _process_batch_print(self, pdf_files: List[str], keyword: str, printer: str):
+    def _process_batch_print(self, pdf_files: List[str], keyword: str, printer: str, additional_filter: str = ""):
         """一括印刷処理（Adobe Acrobat使用）"""
         processed_count = 0
         temp_files = []
-        
+
         try:
             for i, pdf_path in enumerate(pdf_files):
                 temp_pdf = None
                 try:
-                    pages = PdfProcessor.find_keyword_pages(pdf_path, keyword)
+                    pages = PdfProcessor.find_keyword_pages(pdf_path, keyword, additional_filter)
                     if not pages:
                         continue
                     
