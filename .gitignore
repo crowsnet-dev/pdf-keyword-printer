@@ -38,3 +38,4 @@ desktop.ini
 
 # AI
 .cursor/
+.claude/settings.local.json
